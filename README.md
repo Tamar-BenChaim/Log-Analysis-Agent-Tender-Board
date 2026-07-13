@@ -15,7 +15,13 @@ pip install -r requirements.txt
 
 ## הגדרת סביבה
 
-ערכו את `.env` בשורש הפרויקט:
+יש קובץ `.env.example` בשורש הפרויקט שמתעד את כל המשתנים הנדרשים (עם
+הסברים, בלי סודות אמיתיים). מעתיקים אותו ל-`.env` ומכניסים ערכים אמיתיים:
+
+```bash
+cp .env.example .env      # bash / Git Bash
+copy .env.example .env    # Windows cmd
+```
 
 ```env
 MONGODB_URI=mongodb+srv://<user>:<password>@<cluster-url>/?appName=Cluster0
@@ -24,6 +30,9 @@ MONGODB_COLLECTION_NAME=applicationlogs
 MONGODB_DATE_FIELD=timestamp
 MONGODB_TENDER_KEYWORD=tender
 ```
+
+⚠️ `.env` נמצא ב-`.gitignore` ולעולם לא נכנס ל-git — רק `.env.example`
+(שאינו מכיל סודות) נשמר בריפו.
 
 ## הרצה
 
