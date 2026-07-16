@@ -205,6 +205,36 @@ def fetch_tender_board_activity_logs(
     return records
 
 
+def fetch_records_by_request_id(
+    request_id: str,
+    collection: Optional[Collection] = None,
+    request_id_field: str = "requestId",
+    date_field: str = DEFAULT_DATE_FIELD,
+) -> list[dict[str, Any]]:
+    """
+    Fetch every log line sharing one `requestId`, in chronological order.
+
+    Deliberately NOT filtered by module or the tender keyword, unlike
+    fetch_tender_board_activity_logs: one HTTP request can legitimately
+    touch more than one backend module (e.g. an auth middleware line
+    before the tenderBoard handler runs), and tracing a request end to
+    end (chat tool get_request_trace, SCRUM-174) needs all of it, not
+    just the tender-board-tagged subset.
+
+    Records with no `requestId` at all (pre-enrichment logs) can never
+    match, since `request_id_field` simply won't be present - callers
+    should expect an empty list for old-format data, not an error.
+    """
+    if collection is None:
+        collection = get_application_logs_collection()
+
+    try:
+        cursor = collection.find({request_id_field: request_id}).sort(date_field, 1)
+        return list(cursor)
+    except PyMongoError as exc:
+        raise RuntimeError(f"Failed to fetch request trace: {exc}") from exc
+
+
 if __name__ == "__main__":
     # Manual smoke-test entry point for local development only.
     # The real CLI (with formatted output) lives in agent/cli.py.

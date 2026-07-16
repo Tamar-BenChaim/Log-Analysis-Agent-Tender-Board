@@ -1,16 +1,243 @@
 """
-Chat-mode tool list (originally scaffolded in Story SCRUM-170, populated
-in SCRUM-174).
+Chat-mode tool list (scaffolded in SCRUM-170, populated in SCRUM-174).
 
-Empty today on purpose - the `report` subcommand (agent/graph.py's
-build_graph) does not use tools at all. This module exists now so
-agent/cli.py's `chat` subcommand has a stable import target, and so
-SCRUM-174 has an obvious, single place to add the six planned tools
-(get_error_count, get_request_trace, get_user_activity,
-find_duplicate_tenders, get_latency_stats, get_tender_creation_volume)
-without touching agent/graph.py's report-graph wiring.
+Six read-only tools over the same applicationlogs collection the report
+graph uses. Each public, @tool-decorated function has a clean,
+LLM-facing signature (plain strings/dates, no Mongo types) and delegates
+to a private `_..._impl` function that takes an injectable `collection`
+parameter - that split exists for two reasons:
+  1. A pymongo Collection isn't a JSON-schema-able type, so it can never
+     appear in a @tool function's signature.
+  2. Tests call the `_..._impl` functions directly with a mongomock
+     collection, bypassing the LLM/tool-calling layer entirely - the
+     same DI pattern already used by agent.nodes.fetch/stats/errors.
+
+SIDE_EFFECT_TOOLS is empty today - every tool here is read-only. It is
+the switch hitl_node (this story) checks before running a tool; a
+future write-tool only needs to add its name here, not rewire the graph.
 """
 
 from __future__ import annotations
 
-TOOLS: list = []
+import math
+from datetime import datetime
+from typing import Any, Optional
+
+from langchain_core.tools import tool
+from pymongo.collection import Collection
+
+from agent.nodes.classify import CREATE, _HTTP_LOG_PATTERN, classify_log_record
+from agent.nodes.errors import summarize_errors
+from agent.nodes.fetch import (
+    DEFAULT_DATE_FIELD,
+    fetch_records_by_request_id,
+    fetch_tender_board_activity_logs,
+)
+from agent.nodes.classify import count_tender_events
+from agent.nodes.guardrail import screen_free_text
+from agent.nodes.stats import _DURATION_PATTERN, find_duplicate_tenders
+
+DATE_FORMAT = "%Y-%m-%d"
+
+SIDE_EFFECT_TOOLS: set[str] = set()
+
+
+def _parse_date(value: str) -> datetime:
+    return datetime.strptime(value, DATE_FORMAT)
+
+
+# --- get_error_count ------------------------------------------------------
+
+
+def _get_error_count_impl(
+    module: str,
+    start_date: datetime,
+    end_date: datetime,
+    action: Optional[str] = None,
+    collection: Optional[Collection] = None,
+) -> dict[str, Any]:
+    records = fetch_tender_board_activity_logs(start_date=start_date, end_date=end_date, collection=collection)
+    records = [r for r in records if r.get("module") == module]
+    if action is not None:
+        records = [r for r in records if classify_log_record(r) == action]
+    return summarize_errors(records)
+
+
+@tool
+def get_error_count(module: str, start_date: str, end_date: str, action: Optional[str] = None) -> dict[str, Any]:
+    """Count errors in a backend module over a date range, optionally filtered to one action (create/register/edit/delete/view)."""
+    return _get_error_count_impl(module, _parse_date(start_date), _parse_date(end_date), action)
+
+
+# --- get_request_trace ----------------------------------------------------
+
+
+def _get_request_trace_impl(
+    request_id: str, collection: Optional[Collection] = None
+) -> list[dict[str, Any]]:
+    records = fetch_records_by_request_id(request_id, collection=collection)
+    screened = []
+    for record in records:
+        clean = dict(record)
+        for field in ("message", "additionalDetails"):
+            if field in clean:
+                clean[field], _flags = screen_free_text(clean[field])
+        context = clean.get("context")
+        if isinstance(context, dict) and isinstance(context.get("tender"), dict):
+            tender = dict(context["tender"])
+            details = tender.get("additionalDetails")
+            if details is not None:
+                tender["additionalDetails"], _flags = screen_free_text(details)
+            context = dict(context)
+            context["tender"] = tender
+            clean["context"] = context
+        screened.append(clean)
+    return screened
+
+
+@tool
+def get_request_trace(request_id: str) -> list[dict[str, Any]]:
+    """Return every log line for one requestId, in chronological order - useful for tracing one HTTP request end to end."""
+    return _get_request_trace_impl(request_id)
+
+
+# --- get_user_activity -----------------------------------------------------
+
+
+def _get_user_activity_impl(
+    user_id: str, start_date: datetime, end_date: datetime, collection: Optional[Collection] = None
+) -> dict[str, Any]:
+    records = fetch_tender_board_activity_logs(start_date=start_date, end_date=end_date, collection=collection)
+    user_records = [r for r in records if r.get("userId") == user_id]
+    return {"record_count": len(user_records), "counts": count_tender_events(user_records)}
+
+
+@tool
+def get_user_activity(user_id: str, start_date: str, end_date: str) -> dict[str, Any]:
+    """Summarize one user's Tender Board activity (counts by action) over a date range."""
+    return _get_user_activity_impl(user_id, _parse_date(start_date), _parse_date(end_date))
+
+
+# --- find_duplicate_tenders (tool) ------------------------------------------
+
+
+def _find_duplicate_tenders_impl(
+    start_date: datetime,
+    end_date: datetime,
+    user_id: Optional[str] = None,
+    window_seconds: float = 5,
+    collection: Optional[Collection] = None,
+) -> list[dict[str, Any]]:
+    records = fetch_tender_board_activity_logs(start_date=start_date, end_date=end_date, collection=collection)
+    if user_id is not None:
+        records = [r for r in records if r.get("userId") == user_id]
+    return find_duplicate_tenders(records, window_seconds=window_seconds)
+
+
+@tool
+def find_duplicate_tenders_tool(
+    start_date: str, end_date: str, user_id: Optional[str] = None, window_seconds: float = 5
+) -> list[dict[str, Any]]:
+    """Find duplicate-submit tender clusters (same user+org+content within a short time window), optionally scoped to one user."""
+    return _find_duplicate_tenders_impl(_parse_date(start_date), _parse_date(end_date), user_id, window_seconds)
+
+
+# --- get_latency_stats -----------------------------------------------------
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    if not sorted_values:
+        return 0.0
+    k = (len(sorted_values) - 1) * (pct / 100)
+    lower = math.floor(k)
+    upper = math.ceil(k)
+    if lower == upper:
+        return sorted_values[int(k)]
+    return sorted_values[lower] * (upper - k) + sorted_values[upper] * (k - lower)
+
+
+def _get_latency_stats_impl(
+    endpoint: str, start_date: datetime, end_date: datetime, collection: Optional[Collection] = None
+) -> dict[str, Any]:
+    records = fetch_tender_board_activity_logs(start_date=start_date, end_date=end_date, collection=collection)
+
+    durations: list[int] = []
+    for record in records:
+        message = record.get("message")
+        if not isinstance(message, str):
+            continue
+        http_match = _HTTP_LOG_PATTERN.match(message.strip())
+        if not http_match:
+            continue
+        _method, path = http_match.groups()
+        if endpoint not in path:
+            continue
+        duration_match = _DURATION_PATTERN.search(message.strip())
+        if duration_match:
+            durations.append(int(duration_match.group(1)))
+
+    if not durations:
+        return {"count": 0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0}
+
+    durations.sort()
+    return {
+        "count": len(durations),
+        "avg_ms": sum(durations) / len(durations),
+        "p50_ms": _percentile(durations, 50),
+        "p95_ms": _percentile(durations, 95),
+    }
+
+
+@tool
+def get_latency_stats(endpoint: str, start_date: str, end_date: str) -> dict[str, Any]:
+    """Average/p50/p95 response time (ms) for HTTP requests whose path contains `endpoint`, over a date range."""
+    return _get_latency_stats_impl(endpoint, _parse_date(start_date), _parse_date(end_date))
+
+
+# --- get_tender_creation_volume ---------------------------------------------
+
+
+def _get_tender_creation_volume_impl(
+    start_date: datetime,
+    end_date: datetime,
+    group_by: str = "day",
+    collection: Optional[Collection] = None,
+) -> dict[str, int]:
+    records = fetch_tender_board_activity_logs(start_date=start_date, end_date=end_date, collection=collection)
+
+    volume: dict[str, int] = {}
+    for record in records:
+        if classify_log_record(record) != CREATE:
+            continue
+
+        if group_by == "day":
+            timestamp = record.get(DEFAULT_DATE_FIELD)
+            if not isinstance(timestamp, datetime):
+                continue
+            key = timestamp.date().isoformat()
+        else:
+            context = record.get("context") or {}
+            tender = context.get("tender") or {}
+            key = tender.get(group_by)
+            if key is None:
+                continue
+
+        volume[key] = volume.get(key, 0) + 1
+
+    return volume
+
+
+@tool
+def get_tender_creation_volume(start_date: str, end_date: str, group_by: str = "day") -> dict[str, int]:
+    """Count tender creations over a date range, grouped by 'day', 'productType', or 'aiApplicationType'."""
+    return _get_tender_creation_volume_impl(_parse_date(start_date), _parse_date(end_date), group_by)
+
+
+TOOLS: list = [
+    get_error_count,
+    get_request_trace,
+    get_user_activity,
+    find_duplicate_tenders_tool,
+    get_latency_stats,
+    get_tender_creation_volume,
+]
