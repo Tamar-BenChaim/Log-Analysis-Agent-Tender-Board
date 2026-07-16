@@ -38,13 +38,16 @@ MONGODB_TENDER_KEYWORD=tender
 
 ```bash
 # 30 הימים האחרונים (ברירת מחדל)
-python -m tender_agent.cli
+python -m agent.cli report
 
 # מספר ימים מותאם
-python -m tender_agent.cli --days 60
+python -m agent.cli report --days 60
 
 # טווח תאריכים מפורש
-python -m tender_agent.cli --start 2026-01-01 --end 2026-12-31
+python -m agent.cli report --start 2026-01-01 --end 2026-12-31
+
+# מצב צ'אט אינטראקטיבי (בפיתוח, ראו SCRUM-174)
+python -m agent.cli chat
 ```
 
 **פלט לדוגמה:**
@@ -79,14 +82,19 @@ python -m pytest tests/ -v
 ## מבנה הפרויקט
 
 ```
-tender_agent/
-├── db.py           # SCRUM-37: חיבור ל-Mongo ושליפת לוגים לפי טווח תאריכים
-├── classify.py      # SCRUM-38: סיווג כל רשומה + ספירה לפי קטגוריה
-├── report.py         # SCRUM-39: פורמט הדו"ח הקריא
-├── graph.py           # SCRUM-39: הגרף (LangGraph) שמחבר את כל השלבים
-└── cli.py               # SCRUM-39: נקודת הכניסה בפועל - הרצת CLI
-tests/                    # בדיקות יחידה לכל מודול, ללא חיבור אמיתי ל-DB
+agent/
+├── graph.py             # הגרפים (LangGraph): report graph היום, chat graph ב-SCRUM-174
+├── nodes/
+│   ├── fetch.py          # (SCRUM-37) חיבור ל-Mongo ושליפת לוגים לפי טווח תאריכים
+│   ├── classify.py        # (SCRUM-38) סיווג כל רשומה + ספירה לפי קטגוריה
+│   └── report.py           # (SCRUM-39) פורמט הדו"ח הקריא
+├── tools.py                 # רשימת ה-tools למצב צ'אט (ריק כרגע, SCRUM-174)
+└── cli.py                    # נקודת הכניסה בפועל - subcommands report/chat
+evals/                          # מדידת עלות/טוקנים/זמן/נכונות (SCRUM-184)
+tests/                            # בדיקות יחידה לכל מודול, ללא חיבור אמיתי ל-DB
 ```
+
+מבנה זה עודכן ב-SCRUM-170 (במקום `tender_agent/` הקודם) כדי להתאים לפורמט הנדרש לפרויקט הסוכן.
 
 ## מקור הנתונים
 

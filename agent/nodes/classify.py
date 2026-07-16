@@ -1,8 +1,8 @@
 """
-Story SCRUM-38 - Classify & Count Tender Events.
+Classify & Count Tender Events (originally Story SCRUM-38).
 
 Input: the raw list[dict] records produced by
-tender_agent.db.fetch_tender_board_activity_logs (SCRUM-37).
+agent.nodes.fetch.fetch_tender_board_activity_logs.
 
 Output: for each record, one category label; and a total count per
 category across the whole batch.
@@ -134,8 +134,9 @@ def count_tender_events(
     Classify every record and return a count per category.
 
     Every category in ALL_CATEGORIES is always present in the result
-    (with 0 if nothing matched it) - this makes downstream code (SCRUM-39's
-    CLI report) simple, since it never has to guard against a missing key.
+    (with 0 if nothing matched it) - this makes downstream code (the
+    report formatting in agent.nodes.report) simple, since it never has
+    to guard against a missing key.
     """
     counts = Counter(
         classify_log_record(record, message_field=message_field) for record in records

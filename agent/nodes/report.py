@@ -1,17 +1,17 @@
 """
-Story SCRUM-39 - CLI Summary Report (formatting logic).
+CLI Summary Report formatting logic (originally Story SCRUM-39).
 
-Deliberately separated from the LangGraph wiring (graph.py) and from the
-CLI argument parsing (cli.py): this module's only job is turning a
-counts dict into a human-readable string. That makes it trivially
-testable without touching MongoDB or LangGraph at all.
+Deliberately separated from the LangGraph wiring (agent/graph.py) and
+from the CLI argument parsing (agent/cli.py): this module's only job is
+turning a counts dict into a human-readable string. That makes it
+trivially testable without touching MongoDB or LangGraph at all.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from tender_agent.classify import ALL_CATEGORIES, DELETE, EDIT, INVALID, OTHER, REGISTER, VIEW, CREATE
+from agent.nodes.classify import ALL_CATEGORIES, DELETE, EDIT, INVALID, OTHER, REGISTER, VIEW, CREATE
 
 # The 5 categories the story explicitly asks to report on, in the order
 # the business cares about most (create -> register -> edit -> delete -> view).
@@ -29,7 +29,7 @@ def format_report(start_date: datetime, end_date: datetime, counts: dict[str, in
     Build the readable CLI report from a category -> count mapping.
 
     `counts` is expected to already contain every key in
-    tender_agent.classify.ALL_CATEGORIES (that's exactly what
+    agent.nodes.classify.ALL_CATEGORIES (that's exactly what
     count_tender_events guarantees) - this function does not defend
     against missing keys on purpose, so a mismatch surfaces immediately
     as a KeyError during development instead of silently printing "0".

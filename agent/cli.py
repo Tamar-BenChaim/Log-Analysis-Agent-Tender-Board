@@ -1,16 +1,18 @@
 """
-Story SCRUM-39 - CLI Summary Report (entry point).
+CLI entry point (originally Story SCRUM-39; restructured with a `report`/
+`chat` subcommand split in SCRUM-170).
 
 This is the ONLY file a user actually runs. It parses command-line
-arguments, builds the LangGraph pipeline (graph.py), invokes it once,
-and prints the resulting report. It contains no business logic itself -
-that separation is what lets fetch/classify/report each be tested in
-isolation (SCRUM-37/38/39 test files) without ever needing a CLI.
+arguments and dispatches to one of two subcommands:
 
-Usage
------
-    python -m tender_agent.cli --days 30
-    python -m tender_agent.cli --start 2026-01-01 --end 2026-01-31
+    python -m agent.cli report --days 30
+    python -m agent.cli report --start 2026-01-01 --end 2026-01-31
+    python -m agent.cli chat
+
+`report` builds the LangGraph report pipeline (agent/graph.py), invokes
+it once, and prints the resulting report - unchanged behavior from the
+pre-restructure CLI. `chat` is a stub until SCRUM-174 implements the
+interactive chat graph.
 """
 
 from __future__ import annotations
@@ -21,20 +23,24 @@ from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 
-from tender_agent.graph import build_graph
+from agent.graph import build_graph
 
 DATE_FORMAT = "%Y-%m-%d"
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="tender_agent",
+        prog="agent",
         description="Fetch, classify, and summarize Tender Board activity logs.",
     )
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
+    report_parser = subparsers.add_parser(
+        "report", help="Print a one-shot summary report for a date range."
+    )
     # --days and --start/--end are mutually exclusive - you pick ONE way
     # to specify the reporting period.
-    group = parser.add_mutually_exclusive_group()
+    group = report_parser.add_mutually_exclusive_group()
     group.add_argument(
         "--days",
         type=int,
@@ -45,22 +51,29 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--start",
         type=str,
         default=None,
-        help=f"Start date, format {DATE_FORMAT} (requires --end).",
+        help=f"Start date, format {DATE_FORMAT.replace('%', '%%')} (requires --end).",
     )
-
-    parser.add_argument(
+    report_parser.add_argument(
         "--end",
         type=str,
         default=None,
-        help=f"End date, format {DATE_FORMAT} (requires --start).",
+        help=f"End date, format {DATE_FORMAT.replace('%', '%%')} (requires --start).",
     )
 
+    subparsers.add_parser("chat", help="Start an interactive chat session over the logs.")
+
+    return parser
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.start and not args.end:
-        parser.error("--start requires --end")
-    if args.end and not args.start:
-        parser.error("--end requires --start")
+    if args.command == "report":
+        if args.start and not args.end:
+            parser.error("--start requires --end")
+        if args.end and not args.start:
+            parser.error("--end requires --start")
 
     return args
 
@@ -88,10 +101,7 @@ def resolve_date_range(args: argparse.Namespace) -> tuple[datetime, datetime]:
     return start_date, end_date
 
 
-def main(argv: list[str] | None = None) -> int:
-    load_dotenv()
-
-    args = parse_args(argv if argv is not None else sys.argv[1:])
+def run_report(args: argparse.Namespace) -> int:
     start_date, end_date = resolve_date_range(args)
 
     app = build_graph()
@@ -102,6 +112,21 @@ def main(argv: list[str] | None = None) -> int:
     # Non-zero exit code when the fetch failed, so shell scripts / cron
     # jobs calling this CLI can detect failure without parsing the text.
     return 1 if result.get("error") else 0
+
+
+def run_chat(args: argparse.Namespace) -> int:
+    print("Chat mode is not yet implemented - see SCRUM-174.")
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    load_dotenv()
+
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+
+    if args.command == "report":
+        return run_report(args)
+    return run_chat(args)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,13 @@
 """
-Story SCRUM-37 - Fetch Tender Board Activity Logs.
+Fetch Tender Board Activity Logs (originally Story SCRUM-37).
 
 This module owns exactly one responsibility: getting raw log records
 out of MongoDB and into plain Python data structures (list[dict]).
 
-It intentionally does NOT classify, count, or summarize anything -
-that is SCRUM-38 and SCRUM-39. Keeping this file narrow means it can
-later become a single node inside a LangGraph graph (SCRUM-18/SCRUM-19)
-without any rewriting.
+It intentionally does NOT classify, count, or summarize anything - see
+agent.nodes.classify / agent.nodes.report. Keeping this file narrow
+means it can be wired directly as a LangGraph node (agent.graph) with
+no rewriting.
 
 Where the data actually lives
 ------------------------------
@@ -177,7 +177,7 @@ def fetch_tender_board_activity_logs(
 
 if __name__ == "__main__":
     # Manual smoke-test entry point for local development only.
-    # The real CLI (with formatted output) is a separate story: SCRUM-39.
+    # The real CLI (with formatted output) lives in agent/cli.py.
     from dotenv import load_dotenv
 
     load_dotenv()

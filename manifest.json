@@ -1,0 +1,46 @@
+{
+  "name": "CodeGuardian Agent",
+  "version": "1.0.0",
+  "description": "An autonomous agent specialized in analyzing code security, executing sandboxed tests, and generating vulnerability reports.",
+  "creator_name": "John Doe",
+  "contact_information": "john.doe@example.com",
+  "release_date": "2026-06-28",
+  "repository_url": "https://github.com/username/my-llm-agent",
+  "download_url": "https://github.com/username/my-llm-agent/releases/download/v1.0.0/agent.exe",
+ 
+  "target_audience": "Software Developers, AppSec, DevSecOps",
+  "professional_fields": [
+    "Cybersecurity", "Software Development", "Code Review"
+  ],
+  "tasks_capable_of_performing": [
+    "Static Code Analysis (SAST)",
+    "Secure Code Rewriting",
+    "Dependency Vulnerability Scanning",
+    "Automated Patch Generation"
+  ],
+  "examples_of_suitable_questions": [
+    "Scan this Python script for SQL injection.",
+    "Review my LangGraph workflow for prompt injection.",
+    "Fix the hardcoded API keys in this config file?"
+  ],
+ 
+  "technical_specifications": {
+    "framework": "LangGraph",
+    "llm_provider": "OpenRouter",
+    "supported_models": [
+      "anthropic/claude-3.5-sonnet",
+      "meta-llama/llama-3.1-70b-instruct"
+    ],
+    "features_enabled": {
+      "rag": true,
+      "web_search": true,
+      "code_execution": true,
+      "mcp_support": true
+    },
+    "required_permissions": [
+      "local_file_read",
+      "local_file_write",
+      "sandbox_code_execution"
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 """
-Unit tests for tender_agent.graph (Story SCRUM-39 orchestration).
+Unit tests for agent.graph (originally Story SCRUM-39 orchestration).
 
 These tests never touch MongoDB or LangGraph's default checkpointer -
 `fetch_fn` / `count_fn` are replaced with fakes injected via
@@ -9,7 +9,7 @@ conditional edge (success -> classify -> report, and error -> report).
 
 from datetime import datetime
 
-from tender_agent.graph import build_graph
+from agent.graph import build_graph
 
 
 def test_graph_success_path_runs_fetch_then_classify_then_report():

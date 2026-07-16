@@ -1,12 +1,12 @@
 """
-Unit tests for tender_agent.classify (Story SCRUM-38).
+Unit tests for agent.nodes.classify (originally Story SCRUM-38).
 
 Test messages are copied verbatim (or near-verbatim) from real
 test.applicationlogs documents, to make sure the classifier actually
 matches production log shapes and not an idealized guess.
 """
 
-from tender_agent.classify import (
+from agent.nodes.classify import (
     CREATE,
     DELETE,
     EDIT,

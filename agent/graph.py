@@ -1,25 +1,16 @@
 """
-Story SCRUM-39 (+ orchestration backbone for SCRUM-37/38) - LangGraph wiring.
+LangGraph wiring for the report graph (originally Story SCRUM-39
+orchestration; relocated as part of SCRUM-170's restructure).
 
-This file has ONE job: define the graph that connects the pieces built in
-the previous two stories into a single, runnable pipeline:
+This file has ONE job today: define the graph that connects the pieces
+in agent/nodes/ into a single, runnable pipeline:
 
     START -> fetch -> (conditional) -> classify -> report -> END
                               \\_____________________________/
                                (on a fetch error, skip straight to report)
 
-Why a graph at all, instead of just calling three functions in a row?
-----------------------------------------------------------------------
-Three plain function calls would work today. The graph earns its keep
-the moment this pipeline grows: LangGraph gives us, for free and without
-restructuring the code later:
-  - a visual/inspectable structure of the pipeline (node names + edges),
-  - built-in state management (every node reads/writes one shared dict),
-  - conditional routing (see route_after_fetch below) instead of nested
-    if/else spread across a hand-written loop,
-  - a natural place to later add retries, checkpointing, or human-in-the-
-    loop steps without changing the calling code (cli.py never has to
-    know about any of that - it just calls graph.invoke(...)).
+The chat graph (agent.graph.build_chat_graph) is added separately in
+SCRUM-174 - it does not share state or nodes with this one.
 
 Dependency injection for testability
 -------------------------------------
@@ -36,9 +27,9 @@ from typing import Any, Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from tender_agent.classify import count_tender_events
-from tender_agent.db import fetch_tender_board_activity_logs
-from tender_agent.report import format_error_report, format_report
+from agent.nodes.classify import count_tender_events
+from agent.nodes.fetch import fetch_tender_board_activity_logs
+from agent.nodes.report import format_error_report, format_report
 
 
 class ReportState(TypedDict):
@@ -69,7 +60,7 @@ def build_graph(
     count_fn: CountFn = count_tender_events,
 ):
     """
-    Construct and compile the SCRUM-37 -> SCRUM-38 -> SCRUM-39 pipeline.
+    Construct and compile the fetch -> classify -> report pipeline.
 
     Returns a compiled LangGraph app with a single `.invoke(state)` entry
     point - callers (cli.py, tests) never interact with the individual
@@ -78,7 +69,7 @@ def build_graph(
 
     def fetch_node(state: ReportState) -> dict[str, Any]:
         """
-        SCRUM-37 step. Calls the MongoDB fetch function built earlier.
+        Calls the MongoDB fetch function built earlier.
 
         get_mongo_client()/fetch_tender_board_activity_logs() raise
         RuntimeError on a bad connection - that is caught HERE, not
@@ -92,13 +83,13 @@ def build_graph(
             return {"records": [], "error": str(exc)}
 
     def classify_node(state: ReportState) -> dict[str, Any]:
-        """SCRUM-38 step. Only reached when fetch_node succeeded."""
+        """Only reached when fetch_node succeeded."""
         counts = count_fn(state["records"])
         return {"counts": counts}
 
     def report_node(state: ReportState) -> dict[str, Any]:
         """
-        SCRUM-39 step. Builds the final printable string.
+        Builds the final printable string.
 
         Two possible paths lead here: the normal success path (state
         has "counts") and the error shortcut (state has "error" set,
@@ -154,7 +145,7 @@ def build_graph(
 
 if __name__ == "__main__":
     # Manual smoke-test entry point for local development only.
-    # The real CLI (argument parsing) is tender_agent/cli.py.
+    # The real CLI (argument parsing) is agent/cli.py.
     from dotenv import load_dotenv
 
     load_dotenv()

@@ -1,5 +1,5 @@
 """
-Unit tests for tender_agent.db (Story SCRUM-37).
+Unit tests for agent.nodes.fetch (originally Story SCRUM-37).
 
 These tests never touch a real MongoDB server - `mongomock` provides an
 in-memory fake that behaves like pymongo, so the tests run instantly and
@@ -11,7 +11,7 @@ from datetime import datetime
 import mongomock
 import pytest
 
-from tender_agent.db import fetch_tender_board_activity_logs
+from agent.nodes.fetch import fetch_tender_board_activity_logs
 
 
 @pytest.fixture

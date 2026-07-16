@@ -1,9 +1,9 @@
-"""Unit tests for tender_agent.report (part of Story SCRUM-39)."""
+"""Unit tests for agent.nodes.report (originally part of Story SCRUM-39)."""
 
 from datetime import datetime
 
-from tender_agent.classify import ALL_CATEGORIES
-from tender_agent.report import format_error_report, format_report
+from agent.nodes.classify import ALL_CATEGORIES
+from agent.nodes.report import format_error_report, format_report
 
 
 def _zero_counts() -> dict:
