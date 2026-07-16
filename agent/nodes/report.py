@@ -30,6 +30,8 @@ def format_report(
     counts: dict[str, int],
     error_summary: "dict | None" = None,
     anomalies: "dict | None" = None,
+    analysis: "dict | None" = None,
+    analysis_unavailable_reason: "str | None" = None,
 ) -> str:
     """
     Build the readable CLI report from a category -> count mapping.
@@ -47,6 +49,14 @@ def format_report(
     before this story. Both sections are aggregate-level summaries
     only; neither ever lists individual raw records (that stays
     exclusive to chat mode).
+
+    `analysis` (agent.nodes.analyze.analyze_records's return value, once
+    agent.nodes.evaluator.evaluate_analysis has approved it) renders an
+    "AI Analysis" section. `analysis_unavailable_reason` is the
+    alternative when evaluator_node never approved a response within
+    the retry cap - the two are mutually exclusive; passing neither
+    (the default) omits the section entirely, exactly as before this
+    story.
     """
     lines = [
         "Tender Board Activity Summary",
@@ -88,6 +98,20 @@ def format_report(
         lines.append(f"  {len(slow_requests)} request(s) exceeded the latency threshold")
         for slow in slow_requests:
             lines.append(f"    {slow['duration_ms']}ms: {slow['message']}")
+
+    if analysis is not None:
+        lines.append(_SEPARATOR)
+        lines.append("AI Analysis")
+        lines.append(f"  {analysis['business_logic_notes']}")
+        for pattern in analysis["error_patterns"]:
+            lines.append(f"  Error pattern: {pattern}")
+        for anomaly in analysis["anomalies"]:
+            lines.append(f"  Anomaly: {anomaly}")
+        lines.append(f"  Confidence: {analysis['confidence']:.2f}")
+    elif analysis_unavailable_reason is not None:
+        lines.append(_SEPARATOR)
+        lines.append("AI Analysis")
+        lines.append(f"  Unavailable this run - {analysis_unavailable_reason}")
 
     return "\n".join(lines)
 

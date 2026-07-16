@@ -21,8 +21,12 @@ either one depending on the other's state shape.
 from __future__ import annotations
 
 import re
+from typing import Any
+
+from agent.nodes.classify import _is_error_record
 
 MAX_SAMPLE_LENGTH = 500
+MAX_SAMPLES = 8
 REDACTED_MARKER = "[REDACTED - potential prompt injection]"
 
 # Case-insensitive phrasings that commonly indicate a prompt-injection
@@ -80,3 +84,51 @@ def screen_free_text(text: str) -> tuple[str, list[str]]:
         return REDACTED_MARKER, flags
 
     return cleaned[:MAX_SAMPLE_LENGTH], []
+
+
+def collect_and_screen_samples(
+    records: list[dict[str, Any]], max_samples: int = MAX_SAMPLES
+) -> tuple[list[str], list[str]]:
+    """
+    Pull a small sample of real free-text business content out of a
+    batch of records - tender titles/descriptions and error messages -
+    and screen every one of them through screen_free_text before
+    analyze_node's prompt is built (Story SCRUM-180).
+
+    Returns (samples, flags): `samples` is already safe to interpolate
+    into an LLM prompt (redacted where needed); `flags` is the combined
+    list of every reason any sample was redacted, for guardrail_node to
+    surface in the report (never repeating the injected payload itself,
+    just that something was caught).
+
+    Deliberately looks at title/shortDescription (both free text an end
+    user typed on the Tender Board site, same as additionalDetails) in
+    addition to error messages - not just the one field mentioned as an
+    example in analyze_node's design.
+    """
+    raw_samples: list[str] = []
+    for record in records:
+        context = record.get("context")
+        if isinstance(context, dict):
+            tender = context.get("tender")
+            if isinstance(tender, dict):
+                for field in ("title", "shortDescription"):
+                    value = tender.get(field)
+                    if isinstance(value, str) and value:
+                        raw_samples.append(value)
+
+        if _is_error_record(record):
+            message = record.get("message")
+            if isinstance(message, str) and message:
+                raw_samples.append(message)
+
+    samples: list[str] = []
+    flags: list[str] = []
+    for raw in raw_samples:
+        if len(samples) >= max_samples:
+            break
+        clean, sample_flags = screen_free_text(raw)
+        samples.append(clean)
+        flags.extend(sample_flags)
+
+    return samples, flags

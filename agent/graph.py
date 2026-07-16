@@ -1,19 +1,34 @@
 """
 LangGraph wiring for the report graph (originally Story SCRUM-39
 orchestration; relocated as part of SCRUM-170's restructure; extended
-with stats/errors in SCRUM-166).
+with stats/errors in SCRUM-166; extended again with the guardrail/
+analyze/evaluator "secretary" layer in SCRUM-180).
 
 This file has ONE job today: define the graph that connects the pieces
 in agent/nodes/ into a single, runnable pipeline:
 
-    START -> fetch -> (conditional) -> classify -> stats -> errors -> report -> END
-                              \\____________________________________________/
-                               (on a fetch error, skip straight to report)
+    START -> fetch -+-> classify -+
+                     +-> stats ---+-> aggregate -> (conditional, error?) -> report -> END
+                     +-> errors --+                          |
+                                                               +-> guardrail -> analyze -> evaluator -+
+                                                                                    ^                  |
+                                                                                    +--(fail, attempts < cap)--+
+                                                                                    (pass, or cap reached) -> report
 
-classify/stats/errors run SEQUENTIALLY here, one after another - not
-yet the parallel fan-out shown in the design doc. That fan-out (plus
-aggregate/guardrail/analyze/evaluator) is SCRUM-180's job; wiring the
-graph shape twice for the same three nodes would be wasted churn.
+fetch fans out to classify/stats/errors via three plain, UNCONDITIONAL
+edges (LangGraph's built-in parallel dispatch - no manual async/thread
+code needed for multiple edges off one node). This fan-out stays
+unconditional even on a fetch error: aggregate_node has three static
+incoming edges and LangGraph's join waits for every one of them to
+fire in the same step, so conditionally skipping classify would leave
+aggregate waiting on a branch that never ran. Instead, each of
+classify_node/stats_node/errors_node checks state["error"] itself and
+returns {} immediately (still scheduled and "run" by LangGraph, but
+does no real work) - aggregate_node then reads that same error flag
+and routes straight to report_node, skipping guardrail/analyze/
+evaluator entirely. This preserves the original "skip everything
+downstream of fetch on error" guarantee while keeping the fan-out
+itself simple and unconditional.
 
 The chat graph (agent.graph.build_chat_graph, SCRUM-174) is defined
 further down this file - it is a completely separate graph, with its
@@ -22,12 +37,14 @@ It only runs in `chat` mode.
 
 Dependency injection for testability
 -------------------------------------
-build_graph() takes `fetch_fn`/`count_fn`/`stats_fn`/`errors_fn` as
-parameters (defaulting to the real implementations). Tests pass in
-fakes, so the whole graph - including the conditional routing - can be
-exercised without ever touching a real MongoDB connection. build_chat_graph()
-takes an `llm` parameter for the same reason - a fake LLM lets tests
-exercise the ReAct loop without ever calling a real model.
+build_graph() takes `fetch_fn`/`count_fn`/`stats_fn`/`errors_fn`/
+`analyze_fn`/`evaluate_fn` as parameters (defaulting to the real
+implementations). Tests pass in fakes, so the whole graph - including
+the conditional routing and the analyze/evaluate retry loop - can be
+exercised without ever touching a real MongoDB connection or a real
+LLM. build_chat_graph() takes an `llm` parameter for the same reason -
+a fake LLM lets tests exercise the ReAct loop without ever calling a
+real model.
 """
 
 from __future__ import annotations
@@ -41,10 +58,12 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
+from agent.nodes.analyze import analyze_records
 from agent.nodes.classify import count_tender_events
 from agent.nodes.errors import summarize_errors
+from agent.nodes.evaluator import MAX_ANALYSIS_ATTEMPTS, evaluate_analysis
 from agent.nodes.fetch import fetch_tender_board_activity_logs
-from agent.nodes.guardrail import screen_free_text
+from agent.nodes.guardrail import collect_and_screen_samples, screen_free_text
 from agent.nodes.report import format_error_report, format_report
 from agent.nodes.stats import compute_latency_stats, find_duplicate_tenders
 from agent.tools import SIDE_EFFECT_TOOLS, TOOLS
@@ -69,6 +88,11 @@ class ReportState(TypedDict):
     stats: dict[str, Any]
     errors: dict[str, Any]
     anomalies: dict[str, Any]
+    samples: list[str]
+    guardrail_flags: list[str]
+    analysis: Optional[dict[str, Any]]
+    analysis_attempts: int
+    analysis_ok: bool
     report: str
 
 
@@ -76,6 +100,8 @@ FetchFn = Callable[..., list[dict[str, Any]]]
 CountFn = Callable[[list[dict[str, Any]]], dict[str, int]]
 StatsFn = Callable[..., dict[str, Any]]
 ErrorsFn = Callable[..., dict[str, Any]]
+AnalyzeFn = Callable[..., dict[str, Any]]
+EvaluateFn = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], bool]
 
 
 def build_graph(
@@ -84,9 +110,12 @@ def build_graph(
     duplicates_fn: StatsFn = find_duplicate_tenders,
     latency_fn: StatsFn = compute_latency_stats,
     errors_fn: ErrorsFn = summarize_errors,
+    analyze_fn: AnalyzeFn = analyze_records,
+    evaluate_fn: EvaluateFn = evaluate_analysis,
 ):
     """
-    Construct and compile the fetch -> classify -> stats -> errors ->
+    Construct and compile the fetch -> (classify/stats/errors in
+    parallel) -> aggregate -> guardrail -> analyze -> evaluator ->
     report pipeline.
 
     Returns a compiled LangGraph app with a single `.invoke(state)` entry
@@ -110,12 +139,15 @@ def build_graph(
             return {"records": [], "error": str(exc)}
 
     def classify_node(state: ReportState) -> dict[str, Any]:
-        """Only reached when fetch_node succeeded."""
-        counts = count_fn(state["records"])
-        return {"counts": counts}
+        """Runs in parallel with stats_node/errors_node; no-ops on a fetch error."""
+        if state.get("error"):
+            return {}
+        return {"counts": count_fn(state["records"])}
 
     def stats_node(state: ReportState) -> dict[str, Any]:
-        """Latency stats + duplicate-tender detection over the same batch."""
+        """Latency stats + duplicate-tender detection; no-ops on a fetch error."""
+        if state.get("error"):
+            return {}
         duplicates = duplicates_fn(state["records"])
         latency = latency_fn(state["records"])
         return {
@@ -127,19 +159,60 @@ def build_graph(
         }
 
     def errors_node(state: ReportState) -> dict[str, Any]:
-        """Aggregate error summary (deduped, grouped by module)."""
+        """Aggregate error summary (deduped, grouped by module); no-ops on a fetch error."""
+        if state.get("error"):
+            return {}
         return {"errors": errors_fn(state["records"])}
+
+    def aggregate_node(state: ReportState) -> dict[str, Any]:
+        """
+        The single join point after the classify/stats/errors fan-out -
+        LangGraph waits for all three parallel branches to finish
+        before running the node with three incoming edges. Nothing to
+        merge by hand: each branch already wrote distinct ReportState
+        keys (counts / stats+anomalies / errors), so this is a no-op
+        that exists purely as that synchronization point.
+        """
+        return {}
+
+    def guardrail_node(state: ReportState) -> dict[str, Any]:
+        """Collects and screens the small content sample analyze_node will see."""
+        if state.get("error"):
+            return {}
+        samples, flags = collect_and_screen_samples(state["records"])
+        return {"samples": samples, "guardrail_flags": flags}
+
+    def analyze_node(state: ReportState) -> dict[str, Any]:
+        """The one real LLM call. Re-entered on a retry from evaluator_node."""
+        analysis = analyze_fn(state["counts"], state["errors"], state["anomalies"], state["samples"])
+        attempts = state.get("analysis_attempts", 0) + 1
+        return {"analysis": analysis, "analysis_attempts": attempts}
+
+    def evaluator_node(state: ReportState) -> dict[str, Any]:
+        """Decides whether analyze_node's output is trustworthy enough to show."""
+        ok = evaluate_fn(state["analysis"], state["errors"], state["anomalies"])
+        return {"analysis_ok": ok}
 
     def report_node(state: ReportState) -> dict[str, Any]:
         """
         Builds the final printable string.
 
-        Two possible paths lead here: the normal success path (state
-        has "counts"/"errors"/"anomalies") and the error shortcut (state
-        has "error" set, nothing downstream of fetch ever ran).
+        Three possible paths lead here: the error shortcut (state has
+        "error" set, nothing downstream of fetch ever ran), the normal
+        success path with an approved analysis, and the "analysis never
+        passed evaluation within the retry cap" path.
         """
         if state.get("error"):
             report = format_error_report(state["start_date"], state["end_date"], state["error"])
+        elif state.get("analysis_ok"):
+            report = format_report(
+                state["start_date"],
+                state["end_date"],
+                state["counts"],
+                error_summary=state["errors"],
+                anomalies=state["anomalies"],
+                analysis=state["analysis"],
+            )
         else:
             report = format_report(
                 state["start_date"],
@@ -147,16 +220,24 @@ def build_graph(
                 state["counts"],
                 error_summary=state["errors"],
                 anomalies=state["anomalies"],
+                analysis_unavailable_reason=(
+                    f"evaluator could not validate the analysis after "
+                    f"{state.get('analysis_attempts', 0)} attempt(s)"
+                ),
             )
         return {"report": report}
 
-    def route_after_fetch(state: ReportState) -> str:
-        """
-        Conditional edge function - LangGraph calls this after fetch_node
-        finishes, with the up-to-date state, and expects back the NAME of
-        the next node to run.
-        """
-        return "report" if state.get("error") else "classify"
+    def route_after_aggregate(state: ReportState) -> str:
+        """On a fetch error, every parallel branch already no-op'd - skip straight to report."""
+        return "report" if state.get("error") else "guardrail"
+
+    def route_after_evaluator(state: ReportState) -> str:
+        """Pass -> report. Fail -> retry analyze_node, unless the attempt cap is reached."""
+        if state.get("analysis_ok"):
+            return "report"
+        if state.get("analysis_attempts", 0) >= MAX_ANALYSIS_ATTEMPTS:
+            return "report"
+        return "analyze"
 
     builder = StateGraph(ReportState)
 
@@ -166,27 +247,49 @@ def build_graph(
     builder.add_node("classify", classify_node)
     builder.add_node("stats", stats_node)
     builder.add_node("errors", errors_node)
+    builder.add_node("aggregate", aggregate_node)
+    builder.add_node("guardrail", guardrail_node)
+    builder.add_node("analyze", analyze_node)
+    builder.add_node("evaluator", evaluator_node)
     builder.add_node("report", report_node)
 
     # add_edge(START, "fetch"): every run of the graph begins at "fetch".
     builder.add_edge(START, "fetch")
 
-    # add_conditional_edges(source, router, path_map):
-    #   after "fetch" runs, call route_after_fetch(state) - whatever
-    #   string it returns is looked up in path_map to find the real next
-    #   node. This is what lets one node have TWO possible successors
-    #   depending on runtime data, instead of always going to a fixed
-    #   next node like add_edge does.
+    # fetch -> classify/stats/errors: three plain, UNCONDITIONAL edges
+    # off one source node is exactly what makes LangGraph schedule and
+    # run all three in parallel - no manual async/thread code needed.
+    # This must stay unconditional (not routed by state["error"]) even
+    # though all three no-op on a fetch error: aggregate_node below has
+    # three static incoming edges and LangGraph's join waits for every
+    # one of them to fire in the same step - if classify were
+    # conditionally skipped on error, aggregate would be left waiting
+    # on a branch that never ran. The "skip real work on error"
+    # decision therefore lives inside each of the three nodes
+    # themselves (see their docstrings), not in the routing.
+    builder.add_edge("fetch", "classify")
+    builder.add_edge("fetch", "stats")
+    builder.add_edge("fetch", "errors")
+
+    # All three feed into "aggregate", which LangGraph will not run
+    # until every one of its incoming edges has fired (the "join").
+    builder.add_edge("classify", "aggregate")
+    builder.add_edge("stats", "aggregate")
+    builder.add_edge("errors", "aggregate")
+
     builder.add_conditional_edges(
-        "fetch",
-        route_after_fetch,
-        {"classify": "classify", "report": "report"},
+        "aggregate",
+        route_after_aggregate,
+        {"guardrail": "guardrail", "report": "report"},
     )
 
-    # Normal path: classify -> stats -> errors -> report, sequentially.
-    builder.add_edge("classify", "stats")
-    builder.add_edge("stats", "errors")
-    builder.add_edge("errors", "report")
+    builder.add_edge("guardrail", "analyze")
+    builder.add_edge("analyze", "evaluator")
+    builder.add_conditional_edges(
+        "evaluator",
+        route_after_evaluator,
+        {"report": "report", "analyze": "analyze"},
+    )
 
     # Every path ends the same way: report -> END.
     builder.add_edge("report", END)
