@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from langchain_openai import ChatOpenAI
+from agent.llm import get_chat_openai
 
 REQUIRED_ANALYSIS_KEYS = {"business_logic_notes", "error_patterns", "anomalies", "confidence"}
 
@@ -92,7 +92,7 @@ def analyze_records(
     triggers a retry, so a parse failure here must look like "a bad
     analysis" to the graph, not a crash.
     """
-    resolved_llm = llm if llm is not None else ChatOpenAI(model="gpt-4o-mini")
+    resolved_llm = llm if llm is not None else get_chat_openai()
     prompt = _build_prompt(counts, errors, anomalies, samples)
 
     response = resolved_llm.invoke(prompt)

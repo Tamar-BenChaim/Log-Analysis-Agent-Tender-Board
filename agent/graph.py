@@ -53,11 +53,11 @@ import operator
 from datetime import datetime
 from typing import Annotated, Any, Callable, Optional, TypedDict
 
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
+from agent.llm import get_chat_openai
 from agent.nodes.analyze import analyze_records
 from agent.nodes.classify import count_tender_events
 from agent.nodes.errors import summarize_errors
@@ -345,7 +345,7 @@ def build_chat_graph(llm: Any = None, tools: Optional[list] = None):
     of never calling a real model.
     """
     resolved_tools = tools if tools is not None else TOOLS
-    llm_with_tools = llm if llm is not None else ChatOpenAI(model="gpt-4o-mini").bind_tools(resolved_tools)
+    llm_with_tools = llm if llm is not None else get_chat_openai().bind_tools(resolved_tools)
     base_tool_node = ToolNode(resolved_tools)
 
     def agent_node(state: ChatState) -> dict[str, Any]:

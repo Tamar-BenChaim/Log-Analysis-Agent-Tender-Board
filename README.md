@@ -44,6 +44,11 @@ MONGODB_TENDER_BOARD_MODULE=tenderBoard
 # בכל הרצה) וגם במצב chat (agent_node, SCRUM-174 - בחירת tools וניסוח
 # תשובות). שני המצבים משתמשים ב-ChatOpenAI (gpt-4o-mini).
 OPENAI_API_KEY=sk-...
+
+# רק אם מתקבלת שגיאת SSL: CERTIFICATE_VERIFY_FAILED בקריאות ל-OpenAI
+# (רשת עם TLS interception - אותה בעיה בדיוק ש-NODE_TLS_REJECT_UNAUTHORIZED
+# פותר לבקאנד ה-Node). ברירת מחדל: לא מוגדר/false - אימות SSL תקין ומלא.
+OPENAI_DISABLE_SSL_VERIFY=false
 ```
 
 ⚠️ `.env` נמצא ב-`.gitignore` ולעולם לא נכנס ל-git — רק `.env.example`

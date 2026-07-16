@@ -134,9 +134,9 @@ def run_fixture(name: str, live: bool = False, fixtures_dir: Path = FIXTURES_DIR
     tracking_llm: Optional[_UsageTrackingLLM] = None
 
     if live:
-        from langchain_openai import ChatOpenAI
+        from agent.llm import get_chat_openai
 
-        tracking_llm = _UsageTrackingLLM(ChatOpenAI(model=LIVE_MODEL))
+        tracking_llm = _UsageTrackingLLM(get_chat_openai(LIVE_MODEL))
 
         def analyze_fn(counts, errors, anomalies, samples):
             return analyze_records(counts, errors, anomalies, samples, llm=tracking_llm)
