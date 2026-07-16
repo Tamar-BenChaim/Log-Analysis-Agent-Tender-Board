@@ -29,6 +29,11 @@ MONGODB_DB_NAME=test
 MONGODB_COLLECTION_NAME=applicationlogs
 MONGODB_DATE_FIELD=timestamp
 MONGODB_TENDER_KEYWORD=tender
+MONGODB_TENDER_BOARD_MODULE=tenderBoard
+
+# נדרש רק למצב chat (SCRUM-174) - הסוכן קורא ל-OpenAI (ChatOpenAI) לבחירת
+# tools ולניסוח תשובות. מצב report לא צריך את זה בכלל.
+OPENAI_API_KEY=sk-...
 ```
 
 ⚠️ `.env` נמצא ב-`.gitignore` ולעולם לא נכנס ל-git — רק `.env.example`
@@ -46,9 +51,27 @@ python -m agent.cli report --days 60
 # טווח תאריכים מפורש
 python -m agent.cli report --start 2026-01-01 --end 2026-12-31
 
-# מצב צ'אט אינטראקטיבי (בפיתוח, ראו SCRUM-174)
+# מצב צ'אט אינטראקטיבי - שאלות חופשיות על הלוגים (SCRUM-174)
 python -m agent.cli chat
 ```
+
+**דוגמת שימוש ב-chat:**
+
+```
+Tender Board chat - ask a question, or type 'exit'/'quit' to leave.
+> כמה מכרזים נוצרו בין 2026-06-16 ל-2026-07-16, לפי יום?
+The tender creation events between 2026-06-16 and 2026-07-16, grouped by day, are as follows:
+- 2026-07-09: 3 events
+- 2026-07-12: 4 events
+...
+> exit
+```
+
+הסוכן בוחר בעצמו איזה tool להריץ (`get_error_count`, `get_request_trace`,
+`get_user_activity`, `find_duplicate_tenders_tool`, `get_latency_stats`,
+`get_tender_creation_volume`) לפי השאלה שנשאלה, וממשיך בלולאה עד שיש לו
+תשובה סופית. תוצאות tools (למשל טקסט חופשי מ-`get_request_trace`) עוברות
+סינון prompt-injection (`agent/nodes/guardrail.py`) לפני שהן חוזרות למודל.
 
 **פלט לדוגמה:**
 
@@ -83,15 +106,18 @@ python -m pytest tests/ -v
 
 ```
 agent/
-├── graph.py             # הגרפים (LangGraph): report graph היום, chat graph ב-SCRUM-174
+├── graph.py             # שני הגרפים: report graph + chat graph (SCRUM-174)
 ├── nodes/
-│   ├── fetch.py          # (SCRUM-37) חיבור ל-Mongo ושליפת לוגים לפי טווח תאריכים
-│   ├── classify.py        # (SCRUM-38) סיווג כל רשומה + ספירה לפי קטגוריה
-│   └── report.py           # (SCRUM-39) פורמט הדו"ח הקריא
-├── tools.py                 # רשימת ה-tools למצב צ'אט (ריק כרגע, SCRUM-174)
-└── cli.py                    # נקודת הכניסה בפועל - subcommands report/chat
-evals/                          # מדידת עלות/טוקנים/זמן/נכונות (SCRUM-184)
-tests/                            # בדיקות יחידה לכל מודול, ללא חיבור אמיתי ל-DB
+│   ├── fetch.py          # (SCRUM-37/161) שליפת לוגים + מבנה מועשר (module/requestId/...)
+│   ├── classify.py        # (SCRUM-38/161) סיווג כל רשומה + ספירה לפי קטגוריה
+│   ├── report.py           # (SCRUM-39/166) פורמט הדו"ח + סעיפי שגיאות/אנומליות
+│   ├── stats.py             # (SCRUM-166) latency + זיהוי כפילויות
+│   ├── errors.py             # (SCRUM-166) קיבוץ שגיאות עם דה-דופ לפי requestId
+│   └── guardrail.py           # (SCRUM-174) סינון prompt-injection משותף
+├── tools.py                     # (SCRUM-174) 6 ה-tools למצב צ'אט
+└── cli.py                        # נקודת הכניסה בפועל - subcommands report/chat
+evals/                              # מדידת עלות/טוקנים/זמן/נכונות (SCRUM-184)
+tests/                                # בדיקות יחידה לכל מודול, ללא חיבור אמיתי ל-DB/LLM
 ```
 
 מבנה זה עודכן ב-SCRUM-170 (במקום `tender_agent/` הקודם) כדי להתאים לפורמט הנדרש לפרויקט הסוכן.
@@ -104,6 +130,9 @@ tests/                            # בדיקות יחידה לכל מודול, �
 
 ## AI / LLM
 
-אין כרגע שימוש בפועל ב-AI/LLM בקוד. LangChain/LangGraph משמשים כאן
-כתשתית תזמון (orchestration) בלבד. שילוב LLM אמיתי לניתוח סמנטי של
-תוכן מכרזים הוא סטורי עתידי (SCRUM-57), מחוץ לתחום הספרינט הנוכחי.
+מצב `report` לא משתמש ב-LLM כלל (סיווג מבוסס-חוקים בלבד). מצב `chat`
+(SCRUM-174) כן: `agent_node` קורא ל-`ChatOpenAI` (gpt-4o-mini) כדי לבחור
+tools ולנסח תשובות. ה-provider הוא OpenAI, לא Anthropic, למרות ש-
+`requirements.txt` עדיין כולל את `anthropic`/`langchain-anthropic`
+מהתשתית המקורית - הוחלט לעבור ל-OpenAI כי זה המפתח הזמין בסביבה הזו.
+ניתוח סמנטי עמוק יותר של תוכן מכרזים (`analyze_node`) הוא SCRUM-180.

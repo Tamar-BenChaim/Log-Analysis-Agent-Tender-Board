@@ -1,6 +1,6 @@
 """
 CLI entry point (originally Story SCRUM-39; restructured with a `report`/
-`chat` subcommand split in SCRUM-170).
+`chat` subcommand split in SCRUM-170; `chat` implemented in SCRUM-174).
 
 This is the ONLY file a user actually runs. It parses command-line
 arguments and dispatches to one of two subcommands:
@@ -10,9 +10,10 @@ arguments and dispatches to one of two subcommands:
     python -m agent.cli chat
 
 `report` builds the LangGraph report pipeline (agent/graph.py), invokes
-it once, and prints the resulting report - unchanged behavior from the
-pre-restructure CLI. `chat` is a stub until SCRUM-174 implements the
-interactive chat graph.
+it once, and prints the resulting report. `chat` builds the interactive
+chat graph and runs a simple input() loop, printing the agent's final
+answer each turn - it requires a real OPENAI_API_KEY in the environment
+(ChatOpenAI is only constructed on first use, not at import time).
 """
 
 from __future__ import annotations
@@ -23,9 +24,10 @@ from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 
-from agent.graph import build_graph
+from agent.graph import build_chat_graph, build_graph
 
 DATE_FORMAT = "%Y-%m-%d"
+CHAT_EXIT_COMMANDS = {"exit", "quit"}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -115,8 +117,29 @@ def run_report(args: argparse.Namespace) -> int:
 
 
 def run_chat(args: argparse.Namespace) -> int:
-    print("Chat mode is not yet implemented - see SCRUM-174.")
-    return 1
+    print("Tender Board chat - ask a question, or type 'exit'/'quit' to leave.")
+
+    app = build_chat_graph()
+    state: dict = {"messages": [], "guardrail_flags": []}
+
+    while True:
+        try:
+            user_input = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+
+        if not user_input:
+            continue
+        if user_input.lower() in CHAT_EXIT_COMMANDS:
+            return 0
+
+        state["messages"].append(("user", user_input))
+        state = app.invoke(state)
+
+        print(state["messages"][-1].content)
+        if state.get("guardrail_flags"):
+            print(f"[guardrail: {len(state['guardrail_flags'])} flag(s) raised this session]")
 
 
 def main(argv: list[str] | None = None) -> int:
