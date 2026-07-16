@@ -1,0 +1,7 @@
+{
+  "expected_counts": {"register": 3},
+  "expected_duplicates": 0,
+  "expected_guardrail_triggered": false,
+  "expected_analysis_keywords": ["error"],
+  "expect_evaluator_pass": true
+}

@@ -113,6 +113,23 @@ python -m pytest tests/ -v
 
 הבדיקות רצות כולן מול `mongomock` (מסד מדומה בזיכרון) — לא נוגעות במסד האמיתי.
 
+## Evals ל-analyze_node (SCRUM-184)
+
+```bash
+python -m evals.eval          # ברירת מחדל: תשובת LLM מוקלטת מראש (evals/fixtures/*.recorded_response.json), חינמי ודטרמיניסטי
+python -m evals.eval --live    # קריאה אמיתית ל-ChatOpenAI לכל fixture - עלות אמיתית, לדגימה תקופתית בלבד
+```
+
+מריץ כל תרחיש קבוע תחת `evals/fixtures/` (`normal_activity`,
+`duplicate_tender_burst`, `error_spike`, `prompt_injection_attempt`)
+דרך גרף הדוח המלא, ובודק את התוצאה מול הציפיות המתועדות
+(`*.expected.json`): ספירות, מספר כפילויות, האם ה-guardrail הופעל,
+מילות מפתח שצריכות להופיע בניתוח, והאם ה-evaluator אישר את התשובה.
+פלט: שורה אחת לכל fixture תחת `evals/results/eval_<timestamp>.csv`
+(עמודות: `fixture_name, passed, attempts, tokens_in, tokens_out,
+cost_usd, latency_ms, notes`). קבצי ה-CSV עצמם לא נכנסים ל-git
+(`evals/results/*.csv` ב-`.gitignore`) — רק ה-fixtures הם קוד מקור.
+
 ## מבנה הפרויקט
 
 ```
@@ -129,7 +146,10 @@ agent/
 │   └── evaluator.py             # (SCRUM-180) בדיקת תקינות + לולאת ניסיון חוזר
 ├── tools.py                       # (SCRUM-174) 6 ה-tools למצב צ'אט
 └── cli.py                          # נקודת הכניסה בפועל - subcommands report/chat
-evals/                                # מדידת עלות/טוקנים/זמן/נכונות (SCRUM-184)
+evals/
+├── eval.py                              # (SCRUM-184) מריץ fixtures דרך הגרף, מודד עלות/טוקנים/זמן/נכונות
+├── fixtures/                             # תרחישים קבועים: records + expected + recorded_response
+└── results/                               # פלט CSV (מתעלם ב-git, חוץ מ-.gitkeep)
 tests/                                  # בדיקות יחידה לכל מודול, ללא חיבור אמיתי ל-DB/LLM
 ```
 

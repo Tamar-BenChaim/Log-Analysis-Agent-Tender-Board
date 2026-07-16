@@ -1,0 +1,31 @@
+[
+  {
+    "message": "Tender created successfully",
+    "timestamp": "2026-01-05T10:00:00",
+    "userId": "user-1",
+    "organizationId": "org-1",
+    "module": "tenderBoard",
+    "requestId": "req-1",
+    "context": {"tenderId": "tender-1", "tender": {"title": "Roof repair", "budget": 1000}}
+  },
+  {
+    "message": "Applicant registered successfully to tender",
+    "timestamp": "2026-01-06T10:00:00",
+    "userId": "user-2",
+    "organizationId": "org-1",
+    "module": "tenderBoard",
+    "requestId": "req-2"
+  },
+  {
+    "message": "Fetched tenders list",
+    "timestamp": "2026-01-07T10:00:00",
+    "userId": "user-3",
+    "organizationId": "org-1",
+    "module": "tenderBoard",
+    "requestId": "req-3"
+  },
+  {
+    "message": "GET /tender-board 200 45ms",
+    "timestamp": "2026-01-08T10:00:00"
+  }
+]

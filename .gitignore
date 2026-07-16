@@ -48,3 +48,7 @@ Thumbs.db
 
 # --- Claude Code local settings ---
 .claude/settings.local.json
+
+# --- Evals run output (timestamped artifacts, not source) ---
+evals/results/*.csv
+!evals/results/.gitkeep

@@ -1,0 +1,6 @@
+{
+  "business_logic_notes": "Repeated apply-to-tender failures within a short window suggest a systemic issue with the apply flow, not isolated user error.",
+  "error_patterns": ["repeated apply-to-tender failures"],
+  "anomalies": [],
+  "confidence": 0.88
+}

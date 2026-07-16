@@ -1,0 +1,20 @@
+[
+  {
+    "message": "Tender created successfully",
+    "timestamp": "2026-01-05T10:00:00.000",
+    "userId": "user-1",
+    "organizationId": "org-1",
+    "module": "tenderBoard",
+    "requestId": "req-1",
+    "context": {"tenderId": "tender-a", "tender": {"title": "Roof repair", "budget": 1000}}
+  },
+  {
+    "message": "Tender created successfully",
+    "timestamp": "2026-01-05T10:00:00.600",
+    "userId": "user-1",
+    "organizationId": "org-1",
+    "module": "tenderBoard",
+    "requestId": "req-2",
+    "context": {"tenderId": "tender-b", "tender": {"title": "Roof repair", "budget": 1000}}
+  }
+]

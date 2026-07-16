@@ -1,0 +1,7 @@
+{
+  "expected_counts": {"create": 1},
+  "expected_duplicates": 0,
+  "expected_guardrail_triggered": true,
+  "expected_analysis_keywords": [],
+  "expect_evaluator_pass": true
+}

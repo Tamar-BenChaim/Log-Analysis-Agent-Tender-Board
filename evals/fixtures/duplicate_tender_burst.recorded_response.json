@@ -1,0 +1,6 @@
+{
+  "business_logic_notes": "Two identical tenders were created by the same user seconds apart - likely a double-click or client-side retry rather than two real tenders.",
+  "error_patterns": [],
+  "anomalies": ["duplicate tender submission detected"],
+  "confidence": 0.85
+}
