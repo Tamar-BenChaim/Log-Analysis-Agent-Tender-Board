@@ -24,7 +24,13 @@ def _format_date(value: datetime) -> str:
     return value.strftime("%Y-%m-%d")
 
 
-def format_report(start_date: datetime, end_date: datetime, counts: dict[str, int]) -> str:
+def format_report(
+    start_date: datetime,
+    end_date: datetime,
+    counts: dict[str, int],
+    error_summary: "dict | None" = None,
+    anomalies: "dict | None" = None,
+) -> str:
     """
     Build the readable CLI report from a category -> count mapping.
 
@@ -33,6 +39,14 @@ def format_report(start_date: datetime, end_date: datetime, counts: dict[str, in
     count_tender_events guarantees) - this function does not defend
     against missing keys on purpose, so a mismatch surfaces immediately
     as a KeyError during development instead of silently printing "0".
+
+    `error_summary` (agent.nodes.errors.summarize_errors's return value)
+    and `anomalies` (`{"duplicates": [...], "slow_requests": [...]}`)
+    are both optional and default to None so existing callers are
+    unaffected - when omitted, the report looks exactly as it did
+    before this story. Both sections are aggregate-level summaries
+    only; neither ever lists individual raw records (that stays
+    exclusive to chat mode).
     """
     lines = [
         "Tender Board Activity Summary",
@@ -50,6 +64,30 @@ def format_report(start_date: datetime, end_date: datetime, counts: dict[str, in
 
     total = sum(counts[category] for category in ALL_CATEGORIES)
     lines.append(f"{'TOTAL':<12}: {total:>6}")
+
+    if error_summary is not None:
+        lines.append(_SEPARATOR)
+        lines.append("Errors")
+        lines.append(f"  Total: {error_summary['total']}")
+        for module, count in sorted(error_summary["by_module"].items(), key=lambda kv: -kv[1]):
+            lines.append(f"    {module}: {count}")
+        for entry in error_summary["recurring"]:
+            lines.append(f"  RECURRING x{entry['count']} [{entry['module']}]: {entry['message']}")
+
+    if anomalies is not None:
+        lines.append(_SEPARATOR)
+        lines.append("Anomalies")
+        duplicates = anomalies.get("duplicates", [])
+        lines.append(f"  {len(duplicates)} duplicate-submit cluster(s) detected")
+        for dup in duplicates:
+            lines.append(
+                f"    user={dup['user_id']} org={dup['organization_id']} "
+                f"tenders={dup['tender_ids']} ({dup['seconds_apart']:.3f}s apart)"
+            )
+        slow_requests = anomalies.get("slow_requests", [])
+        lines.append(f"  {len(slow_requests)} request(s) exceeded the latency threshold")
+        for slow in slow_requests:
+            lines.append(f"    {slow['duration_ms']}ms: {slow['message']}")
 
     return "\n".join(lines)
 

@@ -63,3 +63,46 @@ def test_graph_handles_zero_records_gracefully():
     assert result["error"] is None
     assert "TOTAL" in result["report"]
     assert result["records"] == []
+
+
+# --- stats_node / errors_node (SCRUM-166) --------------------------------
+
+
+def test_graph_runs_stats_and_errors_nodes_and_includes_them_in_the_report():
+    def fake_fetch_fn(start_date, end_date):
+        return [{"message": "Tender created successfully"}]
+
+    def fake_count_fn(records):
+        return {"create": 1, "register": 0, "edit": 0, "delete": 0, "view": 0, "other": 0, "invalid": 0}
+
+    def fake_duplicates_fn(records):
+        return [
+            {
+                "user_id": "user-1",
+                "organization_id": "org-1",
+                "tender_ids": ["a", "b"],
+                "request_ids": ["r1", "r2"],
+                "seconds_apart": 0.6,
+            }
+        ]
+
+    def fake_latency_fn(records):
+        return {"count": 1, "avg_ms": 2382.0, "max_ms": 2382, "over_threshold": [{"message": "slow", "duration_ms": 2382}]}
+
+    def fake_errors_fn(records):
+        return {"total": 1, "by_module": {"tenderBoard": 1}, "recurring": []}
+
+    app = build_graph(
+        fetch_fn=fake_fetch_fn,
+        count_fn=fake_count_fn,
+        duplicates_fn=fake_duplicates_fn,
+        latency_fn=fake_latency_fn,
+        errors_fn=fake_errors_fn,
+    )
+    result = app.invoke({"start_date": datetime(2026, 1, 1), "end_date": datetime(2026, 1, 31)})
+
+    assert result["errors"] == {"total": 1, "by_module": {"tenderBoard": 1}, "recurring": []}
+    assert result["anomalies"]["duplicates"] == fake_duplicates_fn(None)
+    assert "Errors" in result["report"]
+    assert "Anomalies" in result["report"]
+    assert "user-1" in result["report"]
