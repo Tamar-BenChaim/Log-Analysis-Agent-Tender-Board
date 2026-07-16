@@ -1,5 +1,6 @@
 """
-Fetch Tender Board Activity Logs (originally Story SCRUM-37).
+Fetch Tender Board Activity Logs (originally Story SCRUM-37; enriched
+for the new log schema in SCRUM-161).
 
 This module owns exactly one responsibility: getting raw log records
 out of MongoDB and into plain Python data structures (list[dict]).
@@ -14,25 +15,35 @@ Where the data actually lives
 There is no dedicated "tender board only" log collection. All log lines
 from the whole Node/Express backend (server startup, DB connection,
 every route, every module) are written by winston into one shared
-collection: `test.applicationlogs`. Each document looks like:
+collection: `test.applicationlogs`. The backend now enriches every
+document with top-level fields via AsyncLocalStorage - a document looks
+like:
 
     {
         "level": "info",
         "message": "Tender created successfully",   # or "GET /tender-board 200 159ms", etc.
         "timestamp": datetime(...),
-        "createdAt": datetime(...),
-        "updatedAt": datetime(...),
-        "expiresAt": datetime(...),
-        "__v": 0,
+        "requestId": "...",       # links every line from one HTTP request
+        "userId": "...",
+        "organizationId": "...",
+        "module": "tenderBoard",   # stable, replaces regex-on-message
+        "stack": "...",             # only present on errors
+        "context": {"tenderId": "...", "tender": {...}},  # business events only
     }
 
-So "fetch Tender Board activity logs" = fetch documents from that shared
-collection whose `message` mentions "tender" (case-insensitive). This
-catches both the explicit logger.info(...) calls inside
-tenderBoardService.ts / tenderBoardAIService.ts (e.g. "Tender created
-successfully", "Applicant registered successfully to tender") AND the
-HTTP access-log lines for the /tender-board/* routes (e.g.
-"GET /tender-board/product-types 200 4ms").
+Older documents, written before this enrichment shipped, simply lack
+`module`/`requestId`/etc. entirely - there is no schema-version marker,
+so "is this an enriched record" is decided purely by field presence.
+
+"Fetch Tender Board activity logs" therefore matches EITHER signal:
+  - the new, reliable one: `module == "tenderBoard"`, or
+  - the old, best-effort one: `message` mentions "tender"
+    (case-insensitive) - this still catches HTTP access-log lines for
+    /tender-board/* routes, which are never enriched with `module`
+    (see agent.nodes.classify's module docstring for why).
+Combining both with $or is purely additive: it can never return fewer
+records than the old regex-only query did, and it also picks up new
+business-event rows that rely on `module` instead of message wording.
 """
 
 from __future__ import annotations
@@ -48,6 +59,8 @@ from pymongo.errors import PyMongoError
 DEFAULT_DATE_FIELD = "timestamp"
 DEFAULT_MESSAGE_FIELD = "message"
 DEFAULT_TENDER_KEYWORD = "tender"
+DEFAULT_MODULE_FIELD = "module"
+DEFAULT_TENDER_BOARD_MODULE = "tenderBoard"
 
 
 def get_mongo_client(uri: Optional[str] = None) -> MongoClient:
@@ -119,13 +132,17 @@ def fetch_tender_board_activity_logs(
     date_field: str = DEFAULT_DATE_FIELD,
     message_field: str = DEFAULT_MESSAGE_FIELD,
     tender_keyword: Optional[str] = None,
+    module_field: str = DEFAULT_MODULE_FIELD,
+    module_value: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """
     Fetch Tender Board-related log records for a date range.
 
     The underlying collection is a shared, whole-application log, so this
-    function filters down to rows whose `message_field` contains
-    `tender_keyword` (case-insensitive) in addition to the date range.
+    function filters down to rows that match EITHER of two signals
+    (see module docstring): the new `module_field == module_value`
+    signal, or the old `message_field` contains `tender_keyword`
+    (case-insensitive) signal - in addition to the date range.
 
     Parameters
     ----------
@@ -144,6 +161,13 @@ def fetch_tender_board_activity_logs(
         Case-insensitive substring that identifies a log line as
         tender-board-related. Defaults to the MONGODB_TENDER_KEYWORD
         env var, falling back to "tender".
+    module_field:
+        Name of the enriched top-level field identifying which backend
+        module wrote the line. Defaults to "module".
+    module_value:
+        Value of `module_field` that identifies a Tender Board record.
+        Defaults to the MONGODB_TENDER_BOARD_MODULE env var, falling
+        back to "tenderBoard".
 
     Returns
     -------
@@ -158,10 +182,16 @@ def fetch_tender_board_activity_logs(
     keyword = tender_keyword or os.environ.get(
         "MONGODB_TENDER_KEYWORD", DEFAULT_TENDER_KEYWORD
     )
+    module = module_value or os.environ.get(
+        "MONGODB_TENDER_BOARD_MODULE", DEFAULT_TENDER_BOARD_MODULE
+    )
 
     query = {
         date_field: {"$gte": start_date, "$lte": end_date},
-        message_field: {"$regex": keyword, "$options": "i"},
+        "$or": [
+            {module_field: module},
+            {message_field: {"$regex": keyword, "$options": "i"}},
+        ],
     }
 
     try:

@@ -14,6 +14,7 @@ from agent.nodes.classify import (
     OTHER,
     REGISTER,
     VIEW,
+    _is_error_record,
     classify_log_record,
     count_tender_events,
 )
@@ -173,3 +174,51 @@ def test_count_tender_events_on_empty_list_returns_all_zeros():
         "other": 0,
         "invalid": 0,
     }
+
+
+# --- Enriched log schema (SCRUM-161): module-tagged records -------------
+
+
+def test_module_tagged_record_without_tender_word_still_classifies_by_keyword():
+    # No literal "tender" substring anywhere, but a real keyword rule
+    # ("applicant registered") still matches regardless of `module`.
+    record = {
+        "message": "Applicant registered successfully",
+        "module": "tenderBoard",
+        "requestId": "req-1",
+    }
+    assert classify_log_record(record) == REGISTER
+
+
+def test_module_tagged_record_with_unrecognized_wording_falls_to_other():
+    # A real business event whose exact phrasing isn't in the keyword
+    # table yet - OTHER is the honest outcome, not a special category.
+    record = {"message": "Applicant approved", "module": "tenderBoard"}
+    assert classify_log_record(record) == OTHER
+
+
+def test_old_format_record_without_module_key_classifies_exactly_as_before():
+    # Backward compatibility: absence of `module` must not change the
+    # outcome for a message that already matches a keyword rule.
+    with_module = classify_log_record({"message": "Tender updated successfully", "module": "tenderBoard"})
+    without_module = classify_log_record({"message": "Tender updated successfully"})
+    assert with_module == without_module == EDIT
+
+
+# --- _is_error_record (used by agent.nodes.errors in SCRUM-166) --------
+
+
+def test_is_error_record_true_when_level_is_error():
+    assert _is_error_record({"level": "error", "message": "Tender created successfully"}) is True
+
+
+def test_is_error_record_true_when_stack_present():
+    assert _is_error_record({"message": "Apply to tender failed", "stack": "Error: boom\n at ..."}) is True
+
+
+def test_is_error_record_false_for_normal_info_record():
+    assert _is_error_record({"level": "info", "message": "Tender created successfully"}) is False
+
+
+def test_is_error_record_false_when_no_level_or_stack_present():
+    assert _is_error_record({"message": "Tender created successfully"}) is False
