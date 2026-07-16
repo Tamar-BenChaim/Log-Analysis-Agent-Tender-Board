@@ -91,3 +91,19 @@ def test_format_report_includes_anomalies_section():
     assert "user-1" in report
     assert "1 request(s) exceeded the latency threshold" in report
     assert "2382ms" in report
+
+
+def test_format_report_truncates_long_slow_request_messages():
+    long_query = "q=" + ("a" * 200)
+    anomalies = {
+        "duplicates": [],
+        "slow_requests": [
+            {"message": f"GET /tender-board/smart-search?{long_query} 200 3579ms", "duration_ms": 3579}
+        ],
+    }
+
+    report = format_report(datetime(2026, 1, 1), datetime(2026, 1, 31), _zero_counts(), anomalies=anomalies)
+
+    assert "..." in report
+    assert long_query not in report
+    assert "200 3579ms" in report

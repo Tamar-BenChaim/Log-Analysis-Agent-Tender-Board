@@ -193,6 +193,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.live:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+
     fixture_names = discover_fixtures()
     if not fixture_names:
         print(f"No fixtures found under {FIXTURES_DIR}")

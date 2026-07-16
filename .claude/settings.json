@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -m agent.cli --help)",
+      "Bash(.venv/Scripts/python.exe -m agent.cli report --help)",
+      "Bash(.venv/Scripts/python.exe -m agent.cli chat)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -v)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "mcp__claude_ai_Atlassian_Rovo__transitionJiraIssue",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -q)",
+      "mcp__claude_ai_Atlassian_Rovo__getJiraIssue",
+      "Bash(timeout 20 .venv/Scripts/python.exe -m agent.cli report --days 30)",
+      "Bash(.venv/Scripts/python.exe -c \"import langchain_openai; print\\(langchain_openai.__version__\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import openai; print\\(openai.__version__\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pip install langchain-openai)",
+      "Bash(.venv/Scripts/python.exe -c \"import agent.tools as t; print\\(len\\(t.TOOLS\\)\\); [print\\(x.name\\) for x in t.TOOLS]\")"
+    ]
+  }
+}

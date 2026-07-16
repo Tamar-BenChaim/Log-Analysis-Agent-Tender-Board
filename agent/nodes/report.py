@@ -9,6 +9,7 @@ trivially testable without touching MongoDB or LangGraph at all.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from agent.nodes.classify import ALL_CATEGORIES, DELETE, EDIT, INVALID, OTHER, REGISTER, VIEW, CREATE
@@ -19,9 +20,31 @@ BUSINESS_CATEGORIES = [CREATE, REGISTER, EDIT, DELETE, VIEW]
 
 _SEPARATOR = "-" * 40
 
+# Access-log lines can carry arbitrarily long URL-encoded query strings
+# (e.g. smart-search free-text queries), which would otherwise blow a
+# single anomaly entry across many wrapped terminal lines. Cut those
+# off after this many characters so every entry stays one line.
+_MAX_MESSAGE_LENGTH = 60
+
+# The trailing "STATUS DURATIONms" token on an HTTP access-log line, e.g.
+# "GET /tender-board/smart-search?q=... 200 3579ms" -> " 200 3579ms".
+# Truncation must never eat into this - the duration is the whole reason
+# the line is being reported, so it's kept intact and only the (usually
+# long/noisy) part before it gets cut.
+_TAIL_PATTERN = re.compile(r"\s+\d+\s+\d+ms\s*$")
+
 
 def _format_date(value: datetime) -> str:
     return value.strftime("%Y-%m-%d")
+
+
+def _truncate(text: str, max_length: int = _MAX_MESSAGE_LENGTH) -> str:
+    if len(text) <= max_length:
+        return text
+    tail_match = _TAIL_PATTERN.search(text)
+    tail = tail_match.group(0) if tail_match else ""
+    head_length = max(0, max_length - len(tail) - 3)
+    return text[:head_length].rstrip() + "..." + tail
 
 
 def format_report(
@@ -97,7 +120,7 @@ def format_report(
         slow_requests = anomalies.get("slow_requests", [])
         lines.append(f"  {len(slow_requests)} request(s) exceeded the latency threshold")
         for slow in slow_requests:
-            lines.append(f"    {slow['duration_ms']}ms: {slow['message']}")
+            lines.append(f"    {slow['duration_ms']}ms: {_truncate(slow['message'])}")
 
     if analysis is not None:
         lines.append(_SEPARATOR)

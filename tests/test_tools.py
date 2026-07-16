@@ -12,10 +12,12 @@ from datetime import datetime
 
 import mongomock
 import pytest
+from bson import ObjectId
 
 from agent.nodes.guardrail import REDACTED_MARKER
 from agent.tools import (
     _find_duplicate_tenders_impl,
+    _get_action_counts_impl,
     _get_error_count_impl,
     _get_latency_stats_impl,
     _get_request_trace_impl,
@@ -146,6 +148,76 @@ def test_get_user_activity_filters_by_user_and_counts(collection):
     assert result["counts"]["create"] == 2
 
 
+def test_get_user_activity_matches_when_userid_is_a_real_objectid(collection):
+    # In production `userId` is stored as a bson.ObjectId (see the
+    # backend's enriched log schema), while the tool always receives a
+    # plain hex string from the LLM - ObjectId("abc") == "abc" is False,
+    # so the filter must compare via str() on both sides, not `==`.
+    user_oid = ObjectId("6a3ba4d440bc1468edd8f419")
+    collection.insert_many(
+        [
+            {"userId": user_oid, "message": "Tender created successfully", "timestamp": datetime(2026, 1, 5)},
+            {"userId": ObjectId(), "message": "Tender created successfully", "timestamp": datetime(2026, 1, 5)},
+        ]
+    )
+
+    result = _get_user_activity_impl(
+        "6a3ba4d440bc1468edd8f419", datetime(2026, 1, 1), datetime(2026, 1, 31), collection=collection
+    )
+
+    assert result["record_count"] == 1
+    assert result["counts"]["create"] == 1
+
+
+# --- get_action_counts -------------------------------------------------------
+
+
+def test_get_action_counts_covers_all_users_by_default(collection):
+    collection.insert_many(
+        [
+            {"userId": "user-1", "message": "Tender created successfully", "timestamp": datetime(2026, 1, 5)},
+            {"userId": "user-2", "message": "Tender created successfully", "timestamp": datetime(2026, 1, 6)},
+            {"userId": "user-2", "message": "GET /tender-board 200 4ms", "timestamp": datetime(2026, 1, 6)},
+        ]
+    )
+
+    result = _get_action_counts_impl(datetime(2026, 1, 1), datetime(2026, 1, 31), collection=collection)
+
+    assert result["create"] == 2
+    assert result["view"] == 1
+
+
+def test_get_action_counts_scoped_to_one_user(collection):
+    collection.insert_many(
+        [
+            {"userId": "user-1", "message": "Tender created successfully", "timestamp": datetime(2026, 1, 5)},
+            {"userId": "user-2", "message": "Tender created successfully", "timestamp": datetime(2026, 1, 6)},
+        ]
+    )
+
+    result = _get_action_counts_impl(
+        datetime(2026, 1, 1), datetime(2026, 1, 31), user_id="user-1", collection=collection
+    )
+
+    assert result["create"] == 1
+
+
+def test_get_action_counts_matches_when_userid_is_a_real_objectid(collection):
+    user_oid = ObjectId("6a3ba4d440bc1468edd8f419")
+    collection.insert_many(
+        [
+            {"userId": user_oid, "message": "Tender created successfully", "timestamp": datetime(2026, 1, 5)},
+            {"userId": ObjectId(), "message": "Tender created successfully", "timestamp": datetime(2026, 1, 5)},
+        ]
+    )
+
+    result = _get_action_counts_impl(
+        datetime(2026, 1, 1), datetime(2026, 1, 31), user_id="6a3ba4d440bc1468edd8f419", collection=collection
+    )
+
+    assert result["create"] == 1
+
+
 # --- find_duplicate_tenders (tool impl) -------------------------------------
 
 
@@ -207,6 +279,37 @@ def test_find_duplicate_tenders_impl_empty_for_other_user(collection):
     )
 
     assert duplicates == []
+
+
+def test_find_duplicate_tenders_impl_matches_when_userid_is_a_real_objectid(collection):
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    user_oid = ObjectId("6a3ba4d440bc1468edd8f419")
+    collection.insert_many(
+        [
+            {
+                "userId": user_oid,
+                "organizationId": "org-1",
+                "requestId": "r1",
+                "message": "Tender created successfully",
+                "timestamp": base,
+                "context": {"tenderId": "a", "tender": {"title": "Roof", "budget": 100}},
+            },
+            {
+                "userId": user_oid,
+                "organizationId": "org-1",
+                "requestId": "r2",
+                "message": "Tender created successfully",
+                "timestamp": base,
+                "context": {"tenderId": "b", "tender": {"title": "Roof", "budget": 100}},
+            },
+        ]
+    )
+
+    duplicates = _find_duplicate_tenders_impl(
+        datetime(2026, 1, 1), datetime(2026, 1, 31), user_id="6a3ba4d440bc1468edd8f419", collection=collection
+    )
+
+    assert len(duplicates) == 1
 
 
 # --- get_latency_stats -------------------------------------------------------

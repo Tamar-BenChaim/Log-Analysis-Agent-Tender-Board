@@ -9,7 +9,9 @@ No real LLM and no real MongoDB anywhere here:
     the real six Mongo-backed tools from agent.tools.
 """
 
-from langchain_core.messages import AIMessage, HumanMessage
+from datetime import datetime
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
 from agent.graph import build_chat_graph
@@ -84,6 +86,34 @@ def test_tool_result_containing_injection_is_redacted_and_flagged():
     tool_messages = [m for m in result["messages"] if getattr(m, "type", None) == "tool"]
     assert tool_messages[0].content == REDACTED_MARKER
     assert len(result["guardrail_flags"]) >= 1
+
+
+def test_agent_node_injects_todays_date_without_persisting_it_in_history():
+    # Regression test: the model has no other way to know "today", since
+    # every tool takes absolute start_date/end_date strings (see
+    # agent.tools) and must compute them itself from relative phrasing
+    # like "the last two days".
+    class _RecordingLLM:
+        def __init__(self, response):
+            self._response = response
+            self.seen_messages = None
+
+        def invoke(self, messages):
+            self.seen_messages = list(messages)
+            return self._response
+
+    fake_llm = _RecordingLLM(AIMessage(content="answer"))
+
+    app = build_chat_graph(llm=fake_llm, tools=[echo_tool])
+    result = app.invoke({"messages": [HumanMessage("what happened today?")], "guardrail_flags": []})
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    assert isinstance(fake_llm.seen_messages[0], SystemMessage)
+    assert today in fake_llm.seen_messages[0].content
+
+    # The reminder is re-derived every call, not appended to persisted
+    # history - only the human question and the final AI answer remain.
+    assert not any(isinstance(m, SystemMessage) for m in result["messages"])
 
 
 def test_hitl_never_blocks_because_no_tool_is_registered_as_a_side_effect():

@@ -53,6 +53,7 @@ import operator
 from datetime import datetime
 from typing import Annotated, Any, Callable, Optional, TypedDict
 
+from langchain_core.messages import SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -349,7 +350,33 @@ def build_chat_graph(llm: Any = None, tools: Optional[list] = None):
     base_tool_node = ToolNode(resolved_tools)
 
     def agent_node(state: ChatState) -> dict[str, Any]:
-        response = llm_with_tools.invoke(state["messages"])
+        """
+        Every tool takes absolute `start_date`/`end_date` strings (see
+        agent.tools) - there is no "last N days" parameter the model can
+        rely on. The model must therefore compute those dates itself
+        from relative phrasing ("the last two days"), and it has no
+        other way to know what "today" actually is - its training data
+        has a fixed, stale cutoff. Without this reminder it silently
+        guesses a training-cutoff-era date, computes a date range that
+        never overlaps the real data, and the tools correctly (but
+        misleadingly) come back empty.
+
+        The reminder is injected fresh into the LLM call every turn,
+        not added to `state["messages"]` - it must reflect "now" at
+        call time, not the date the conversation started, and ChatState
+        uses the add_messages reducer (messages only ever get appended),
+        so persisting it here would duplicate it into history every turn.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        date_reminder = SystemMessage(
+            content=(
+                f"Today's date is {today}. Every tool takes start_date/end_date as "
+                "absolute YYYY-MM-DD strings - when the user asks about a relative "
+                "period (e.g. \"the last two days\", \"this week\"), compute the "
+                "concrete dates yourself using today's date above."
+            )
+        )
+        response = llm_with_tools.invoke([date_reminder, *state["messages"]])
         return {"messages": [response]}
 
     def hitl_node(state: ChatState) -> dict[str, Any]:
