@@ -13,6 +13,12 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+לפיתוח/הרצת בדיקות/אריזה כ-exe (כולל `pyinstaller`, ראו "אריזה" למטה):
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ## הגדרת סביבה
 
 יש קובץ `.env.example` בשורש הפרויקט שמתעד את כל המשתנים הנדרשים (עם
@@ -163,9 +169,36 @@ tests/                                  # בדיקות יחידה לכל מוד�
 
 ## AI / LLM
 
-מצב `report` לא משתמש ב-LLM כלל (סיווג מבוסס-חוקים בלבד). מצב `chat`
-(SCRUM-174) כן: `agent_node` קורא ל-`ChatOpenAI` (gpt-4o-mini) כדי לבחור
-tools ולנסח תשובות. ה-provider הוא OpenAI, לא Anthropic, למרות ש-
-`requirements.txt` עדיין כולל את `anthropic`/`langchain-anthropic`
-מהתשתית המקורית - הוחלט לעבור ל-OpenAI כי זה המפתח הזמין בסביבה הזו.
-ניתוח סמנטי עמוק יותר של תוכן מכרזים (`analyze_node`) הוא SCRUM-180.
+מצב `report` בסיווג (`classify_node`) לא משתמש ב-LLM כלל (מבוסס-חוקים
+בלבד) - אבל כן מריץ קריאת LLM אחת ל-`analyze_node` (SCRUM-180). מצב
+`chat` (SCRUM-174) גם כן: `agent_node` קורא ל-`ChatOpenAI` (gpt-4o-mini)
+כדי לבחור tools ולנסח תשובות. ה-provider הוא OpenAI, לא Anthropic,
+למרות ש-`requirements.txt` עדיין כולל את `anthropic`/`langchain-anthropic`
+מהתשתית המקורית - הוחלט לעבור ל-OpenAI כי זה המפתח הזמין בסביבה הזו
+(ראו גם `manifest.json`: `technical_specifications.llm_provider`).
+
+## אריזה כקובץ הרצה עצמאי (SCRUM-188)
+
+```bash
+pip install -r requirements-dev.txt
+pyinstaller --name tender-agent --onefile run_cli.py
+```
+
+מייצר `dist/tender-agent.exe` - קובץ יחיד, ללא תלות ב-Python מותקן.
+`run_cli.py` הוא נקודת כניסה דקה בשורש הפרויקט (לא `agent/cli.py`
+ישירות) - כדי ש-PyInstaller יריץ ניתוח מה-root של הפרויקט וייבוא
+`agent.*` יעבוד; הרצת PyInstaller ישירות על קובץ שבתוך החבילה עצמה
+הייתה שוברת את פענוח ה-imports היחסיים.
+
+**הרצה בפועל:**
+
+```bash
+dist/tender-agent.exe report --days 30
+dist/tender-agent.exe chat
+```
+
+יש להעתיק `.env` אמיתי (עם `MONGODB_URI`/`OPENAI_API_KEY`) לצד ה-exe
+(או להריץ מהתיקייה שמכילה אותו) - **לעולם לא** `.env` עם סודות אמיתיים
+נכנס ל-git, רק `.env.example`. נבדק ידנית מקצה לקצה: ה-exe מתחבר
+בהצלחה ל-Mongo האמיתי ומריץ את כל הגרף (fetch/classify/stats/errors/
+guardrail) ללא בעיה.

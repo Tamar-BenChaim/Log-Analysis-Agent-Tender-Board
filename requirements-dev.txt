@@ -1,0 +1,10 @@
+# Extra dependencies needed only to build the standalone executable
+# (Story SCRUM-188) and to run the test suite - never needed by the
+# packaged tender-agent.exe itself at runtime.
+-r requirements.txt
+
+altgraph==0.17.5
+pefile==2024.8.26
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+pywin32-ctypes==0.2.3

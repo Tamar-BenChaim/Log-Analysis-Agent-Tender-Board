@@ -1,46 +1,45 @@
 {
-  "name": "CodeGuardian Agent",
+  "name": "Tender Board Activity Agent",
   "version": "1.0.0",
-  "description": "An autonomous agent specialized in analyzing code security, executing sandboxed tests, and generating vulnerability reports.",
-  "creator_name": "John Doe",
-  "contact_information": "john.doe@example.com",
-  "release_date": "2026-06-28",
-  "repository_url": "https://github.com/username/my-llm-agent",
-  "download_url": "https://github.com/username/my-llm-agent/releases/download/v1.0.0/agent.exe",
- 
-  "target_audience": "Software Developers, AppSec, DevSecOps",
+  "description": "An agent that monitors Tender Board activity in the shared MongoDB application log collection (applicationlogs). It fetches, classifies, and summarizes activity over a date range; detects error patterns and anomalies (duplicate-submit tender clusters, unusually slow requests); runs one LLM-based deep-analysis pass per report, screened for prompt injection and validated before being shown; and offers an interactive chat mode for free-form questions about the logs via a set of read-only tools.",
+  "creator_name": "Tamar Ben Chaim",
+  "contact_information": "tamar@safeai613.com",
+  "release_date": "2026-07-16",
+  "repository_url": "https://github.com/Tamar-BenChaim/Log-Analysis-Agent-Tender-Board",
+  "download_url": "https://github.com/Tamar-BenChaim/Log-Analysis-Agent-Tender-Board/releases/download/v1.0.0/tender-agent.exe",
+
+  "target_audience": "Tender Board product/engineering team; DevOps and support staff monitoring SafeAI-613 system health",
   "professional_fields": [
-    "Cybersecurity", "Software Development", "Code Review"
+    "Software Development", "Operations Monitoring", "Application Support"
   ],
   "tasks_capable_of_performing": [
-    "Static Code Analysis (SAST)",
-    "Secure Code Rewriting",
-    "Dependency Vulnerability Scanning",
-    "Automated Patch Generation"
+    "Fetch, classify, and summarize Tender Board activity (create/register/edit/delete/view) over a date range",
+    "Detect and summarize error patterns across backend modules, de-duplicated by request",
+    "Detect duplicate-submit tender clusters and unusually slow requests",
+    "Run one LLM analysis pass per report for business-logic sanity, error-pattern, and anomaly narration",
+    "Answer free-form interactive questions about the logs via a chat interface with six read-only tools"
   ],
   "examples_of_suitable_questions": [
-    "Scan this Python script for SQL injection.",
-    "Review my LangGraph workflow for prompt injection.",
-    "Fix the hardcoded API keys in this config file?"
+    "How many tenders were created in the last 30 days?",
+    "How many errors happened in the tenderBoard module this week?",
+    "Show me the full trace for requestId <id>.",
+    "Were there any duplicate tender submissions today?",
+    "What is the p95 latency for the smart-search endpoint?",
+    "How many tenders were created per day, grouped by productType?"
   ],
- 
+
   "technical_specifications": {
     "framework": "LangGraph",
-    "llm_provider": "OpenRouter",
-    "supported_models": [
-      "anthropic/claude-3.5-sonnet",
-      "meta-llama/llama-3.1-70b-instruct"
-    ],
+    "llm_provider": "OpenAI",
+    "supported_models": ["gpt-4o-mini"],
     "features_enabled": {
-      "rag": true,
-      "web_search": true,
-      "code_execution": true,
-      "mcp_support": true
+      "rag": false,
+      "web_search": false,
+      "code_execution": false,
+      "mcp_support": false
     },
     "required_permissions": [
-      "local_file_read",
-      "local_file_write",
-      "sandbox_code_execution"
+      "mongodb_read"
     ]
   }
 }
