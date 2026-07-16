@@ -3,7 +3,10 @@
 סוכן שמתחבר ל-MongoDB, שולף לוגי פעילות של לוח המכרזים (Tender Board),
 מסווג וסופר אותם לפי סוג פעולה, ומציג דו"ח קריא ב-CLI.
 
-התהליך בנוי כגרף LangGraph: `fetch -> classify -> report`.
+התהליך בנוי כשני גרפי LangGraph: report graph
+(`fetch -> classify/stats/errors (מקבילי) -> aggregate -> guardrail ->
+analyze -> evaluator -> report`) ו-chat graph אינטראקטיבי (`agent ->
+tool -> agent -> ...`). שניהם מפורטים למטה.
 
 ## התקנה
 
@@ -37,8 +40,9 @@ MONGODB_DATE_FIELD=timestamp
 MONGODB_TENDER_KEYWORD=tender
 MONGODB_TENDER_BOARD_MODULE=tenderBoard
 
-# נדרש רק למצב chat (SCRUM-174) - הסוכן קורא ל-OpenAI (ChatOpenAI) לבחירת
-# tools ולניסוח תשובות. מצב report לא צריך את זה בכלל.
+# נדרש גם במצב report (analyze_node, SCRUM-180 - ניתוח עומק פעם אחת
+# בכל הרצה) וגם במצב chat (agent_node, SCRUM-174 - בחירת tools וניסוח
+# תשובות). שני המצבים משתמשים ב-ChatOpenAI (gpt-4o-mini).
 OPENAI_API_KEY=sk-...
 ```
 
