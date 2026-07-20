@@ -64,4 +64,6 @@ def classify_security_risk(text: str, llm: Optional[Any] = None) -> dict[str, An
     """
     resolved_llm = llm if llm is not None else get_chat_openai()
     prompt = _build_prompt(text[:MAX_INPUT_LENGTH])
-    return run_json_classifier(resolved_llm, prompt, fail_open_on_error=FAIL_OPEN_ON_ERROR)
+    return run_json_classifier(
+        resolved_llm, prompt, fail_open_on_error=FAIL_OPEN_ON_ERROR, node="security_guardrail"
+    )

@@ -1,6 +1,7 @@
 """Unit tests for agent.nodes.llm_classifier.run_json_classifier. No real LLM calls."""
 
 import json
+import logging
 
 from agent.nodes.llm_classifier import run_json_classifier
 
@@ -113,3 +114,53 @@ def test_run_json_classifier_fails_closed_on_sustained_network_error_by_default(
 
     assert result["allowed"] is False
     assert result["reason"].startswith("guardrail_error:llm_call_failed:")
+
+
+def _parsed_log_records(caplog):
+    return [json.loads(record.message) for record in caplog.records]
+
+
+def test_run_json_classifier_logs_linked_start_end_pair_with_given_node(caplog):
+    caplog.set_level(logging.INFO, logger="agent.nodes.llm_classifier")
+    fake_llm = _FakeLLM(json.dumps({"allowed": True, "reason": ""}))
+
+    run_json_classifier(fake_llm, "prompt", fail_open_on_error=False, node="topic_guardrail")
+
+    entries = _parsed_log_records(caplog)
+    assert len(entries) == 2
+    start, end = entries
+    assert start["phase"] == "start"
+    assert start["status"] is None
+    assert start["node"] == "topic_guardrail"
+    assert start["node_type"] == "llm"
+    assert start["input"]["user_prompt"] == "prompt"
+    assert end["phase"] == "end"
+    assert end["status"] == "success"
+    assert end["invocation_id"] == start["invocation_id"]
+    assert end["duration_ms"] >= 0
+    assert end["error"] is None
+
+
+def test_run_json_classifier_defaults_node_when_not_given(caplog):
+    caplog.set_level(logging.INFO, logger="agent.nodes.llm_classifier")
+    fake_llm = _FakeLLM(json.dumps({"allowed": True, "reason": ""}))
+
+    run_json_classifier(fake_llm, "prompt", fail_open_on_error=False)
+
+    start = _parsed_log_records(caplog)[0]
+    assert start["node"] == "llm_classifier"
+
+
+def test_run_json_classifier_logs_error_status_on_each_failed_attempt(caplog):
+    caplog.set_level(logging.INFO, logger="agent.nodes.llm_classifier")
+    fake_llm = _AlwaysFailsLLM()
+
+    run_json_classifier(fake_llm, "prompt", fail_open_on_error=False)
+
+    entries = _parsed_log_records(caplog)
+    # Two attempts, each a start/end pair -> 4 entries, both ends are errors.
+    assert len(entries) == 4
+    ends = [e for e in entries if e["phase"] == "end"]
+    assert len(ends) == 2
+    assert all(e["status"] == "error" for e in ends)
+    assert all(e["error"] for e in ends)

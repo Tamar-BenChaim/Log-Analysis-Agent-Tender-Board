@@ -55,8 +55,12 @@ calling a real model.
 
 from __future__ import annotations
 
+import json
+import logging
 import operator
-from datetime import datetime
+import time
+import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, SystemMessage
@@ -76,6 +80,8 @@ from agent.nodes.security_guardrail import classify_security_risk
 from agent.nodes.stats import compute_latency_stats, find_duplicate_tenders
 from agent.nodes.topic_guardrail import classify_topic
 from agent.tools import SIDE_EFFECT_TOOLS, TOOLS
+
+logger = logging.getLogger(__name__)
 
 
 class ReportState(TypedDict):
@@ -420,7 +426,49 @@ def build_chat_graph(
                 "concrete dates yourself using today's date above."
             )
         )
-        response = llm_with_tools.invoke([date_reminder, *state["messages"]])
+        invocation_id = str(uuid.uuid4())
+        # TODO: share one run_id per turn once the future logger module exists
+        run_id = str(uuid.uuid4())
+        logger.info(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "run_id": run_id,
+            "parent_run_id": None,
+            "agent_name": "tender-board-chat-agent",
+            "node": "agent",
+            "node_type": "llm",
+            "invocation_id": invocation_id,
+            "phase": "start",
+            "status": None,
+            "description": "ReAct agent turn - selects a tool call or produces the final answer",
+            "input": {"system_prompt": date_reminder.content, "user_prompt": _latest_user_text(state)},
+            "tags": ["chat", "agent"],
+            "metadata": {"message_count": len(state["messages"])},
+        }, default=str))
+
+        start = time.monotonic()
+        try:
+            response = llm_with_tools.invoke([date_reminder, *state["messages"]])
+        except Exception as exc:
+            logger.error(json.dumps({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "invocation_id": invocation_id,
+                "phase": "end",
+                "status": "error",
+                "duration_ms": (time.monotonic() - start) * 1000,
+                "output": None,
+                "error": str(exc),
+            }, default=str))
+            raise
+
+        logger.info(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "invocation_id": invocation_id,
+            "phase": "end",
+            "status": "success",
+            "duration_ms": (time.monotonic() - start) * 1000,
+            "output": response.content if hasattr(response, "content") else str(response),
+            "error": None,
+        }, default=str))
         return {"messages": [response]}
 
     def hitl_node(state: ChatState) -> dict[str, Any]:

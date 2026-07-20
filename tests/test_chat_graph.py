@@ -9,6 +9,8 @@ No real LLM and no real MongoDB anywhere here:
     the real six Mongo-backed tools from agent.tools.
 """
 
+import json
+import logging
 from datetime import datetime
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -203,6 +205,26 @@ def test_both_guardrails_allow_continues_to_agent():
     assert fake_llm.call_count == 1
     assert result["messages"][-1].content == "here is your answer"
     assert result["guardrail_flags"] == []
+
+
+def test_agent_node_logs_linked_start_end_pair(caplog):
+    caplog.set_level(logging.INFO, logger="agent.graph")
+    fake_llm = _FakeLLM([AIMessage(content="here is your answer")])
+
+    app = build_chat_graph(
+        llm=fake_llm, tools=[echo_tool], topic_guardrail_fn=_allow, security_guardrail_fn=_allow
+    )
+    app.invoke({"messages": [HumanMessage("how many tenders were created today?")], "guardrail_flags": []})
+
+    entries = [json.loads(record.message) for record in caplog.records]
+    assert len(entries) == 2
+    start, end = entries
+    assert start["phase"] == "start"
+    assert start["node"] == "agent"
+    assert start["node_type"] == "llm"
+    assert end["phase"] == "end"
+    assert end["status"] == "success"
+    assert end["invocation_id"] == start["invocation_id"]
 
 
 def test_either_guardrail_blocking_prevents_agent_regardless_of_the_other():

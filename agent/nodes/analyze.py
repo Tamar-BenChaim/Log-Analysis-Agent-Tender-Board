@@ -17,9 +17,15 @@ call a real model.
 from __future__ import annotations
 
 import json
+import logging
+import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from agent.llm import get_chat_openai
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_ANALYSIS_KEYS = {"business_logic_notes", "error_patterns", "anomalies", "confidence"}
 
@@ -95,8 +101,50 @@ def analyze_records(
     resolved_llm = llm if llm is not None else get_chat_openai()
     prompt = _build_prompt(counts, errors, anomalies, samples)
 
-    response = resolved_llm.invoke(prompt)
+    invocation_id = str(uuid.uuid4())
+    # TODO: share one run_id per turn once the future logger module exists
+    run_id = str(uuid.uuid4())
+    logger.info(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "parent_run_id": None,
+        "agent_name": "tender-board-report-agent",
+        "node": "analyze",
+        "node_type": "llm",
+        "invocation_id": invocation_id,
+        "phase": "start",
+        "status": None,
+        "description": "Deep analysis pass over report counts/errors/anomalies/samples",
+        "input": {"system_prompt": None, "user_prompt": prompt},
+        "tags": ["report", "analyze"],
+        "metadata": {"num_samples": len(samples)},
+    }, default=str))
+
+    start = time.monotonic()
+    try:
+        response = resolved_llm.invoke(prompt)
+    except Exception as exc:
+        logger.error(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "invocation_id": invocation_id,
+            "phase": "end",
+            "status": "error",
+            "duration_ms": (time.monotonic() - start) * 1000,
+            "output": None,
+            "error": str(exc),
+        }, default=str))
+        raise
+
     content = response.content if hasattr(response, "content") else str(response)
+    logger.info(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "invocation_id": invocation_id,
+        "phase": "end",
+        "status": "success",
+        "duration_ms": (time.monotonic() - start) * 1000,
+        "output": content,
+        "error": None,
+    }, default=str))
 
     try:
         parsed = json.loads(content)
