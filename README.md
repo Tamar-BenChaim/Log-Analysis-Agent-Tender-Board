@@ -5,8 +5,9 @@
 
 התהליך בנוי כשני גרפי LangGraph: report graph
 (`fetch -> classify/stats/errors (מקבילי) -> aggregate -> guardrail ->
-analyze -> evaluator -> report`) ו-chat graph אינטראקטיבי (`agent ->
-tool -> agent -> ...`). שניהם מפורטים למטה.
+analyze -> evaluator -> report`) ו-chat graph אינטראקטיבי (`topic_guardrail/
+security_guardrail (מקבילי) -> guardrail_gate -> agent -> tool -> agent ->
+...`). שניהם מפורטים למטה.
 
 ## התקנה
 
@@ -88,6 +89,17 @@ The tender creation events between 2026-06-16 and 2026-07-16, grouped by day, ar
 תשובה סופית. תוצאות tools (למשל טקסט חופשי מ-`get_request_trace`) עוברות
 סינון prompt-injection (`agent/nodes/guardrail.py`) לפני שהן חוזרות למודל.
 
+**לפני שהודעת המשתמש בכלל מגיעה לסוכן**, היא עוברת דרך שני guardrails
+נפרדים מבוססי-LLM שרצים **במקביל** (`topic_guardrail`, `security_guardrail`
+- ראו "מבנה הפרויקט" למטה): הראשון בודק שהשאלה אכן קשורה למכרזים
+(חוסם small-talk/שאלות כלליות לא-קשורות), השני בודק ניסיונות
+prompt-injection ("התעלם מההוראות הקודמות" וכו') או בקשות שחשודות
+כניסיון לשליפה מסוכנת/לא-מורשית מהדאטהבייס. **שני ה-guardrails חייבים
+לאשר** - אם אחד מהם חוסם, הסוכן (`agent_node`) לא נקרא כלל, והמשתמש
+מקבל הודעת סירוב במקום. ברירת המחדל של שניהם היא **fail-closed**: תקלת
+רשת/LLM ממושכת מול OpenAI תחסום גם היא את הפנייה (לאחר ניסיון חוזר יחיד
+על כשל רשת חולף) - ראו `agent/nodes/llm_classifier.py`.
+
 **פלט לדוגמה:**
 
 ```
@@ -156,7 +168,10 @@ agent/
 │   ├── report.py           # (SCRUM-39/166/180) פורמט הדו"ח + שגיאות/אנומליות/AI Analysis
 │   ├── stats.py             # (SCRUM-166) latency + זיהוי כפילויות
 │   ├── errors.py             # (SCRUM-166) קיבוץ שגיאות עם דה-דופ לפי requestId
-│   ├── guardrail.py           # (SCRUM-174/180) סינון prompt-injection + איסוף מדגם תוכן
+│   ├── guardrail.py           # (SCRUM-174/180) סינון prompt-injection + איסוף מדגם תוכן (על תוצאות tools/דוח)
+│   ├── llm_classifier.py       # helper משותף ל-topic/security guardrail: קריאת LLM -> JSON -> fallback בטוח
+│   ├── topic_guardrail.py       # guardrail על קלט המשתמש בצ'אט: חוסם שאלות לא-קשורות למכרזים
+│   ├── security_guardrail.py     # guardrail על קלט המשתמש בצ'אט: חוסם prompt-injection/שליפה מסוכנת
 │   ├── analyze.py              # (SCRUM-180) קריאת LLM אחת לניתוח עומק
 │   └── evaluator.py             # (SCRUM-180) בדיקת תקינות + לולאת ניסיון חוזר
 ├── tools.py                       # (SCRUM-174) 6 ה-tools למצב צ'אט
@@ -180,8 +195,12 @@ tests/                                  # בדיקות יחידה לכל מוד�
 
 מצב `report` בסיווג (`classify_node`) לא משתמש ב-LLM כלל (מבוסס-חוקים
 בלבד) - אבל כן מריץ קריאת LLM אחת ל-`analyze_node` (SCRUM-180). מצב
-`chat` (SCRUM-174) גם כן: `agent_node` קורא ל-`ChatOpenAI` (gpt-4o-mini)
-כדי לבחור tools ולנסח תשובות. ה-provider הוא OpenAI, לא Anthropic,
+`chat` (SCRUM-174) משתמש ביותר מקריאת LLM אחת לכל תור: `topic_guardrail`
+ו-`security_guardrail` רצים במקביל ובודקים את הודעת המשתמש לפני שהיא
+מגיעה לסוכן, ורק אם שניהם אישרו `agent_node` קורא ל-`ChatOpenAI`
+(gpt-4o-mini) כדי לבחור tools ולנסח תשובות - כלומר תור עם קריאת tool
+אחת הוא בפועל 4 קריאות LLM (שני ה-guardrails במקביל + 2 קריאות סוכן),
+לא אחת. ה-provider הוא OpenAI, לא Anthropic,
 למרות ש-`requirements.txt` עדיין כולל את `anthropic`/`langchain-anthropic`
 מהתשתית המקורית - הוחלט לעבור ל-OpenAI כי זה המפתח הזמין בסביבה הזו
 (ראו גם `manifest.json`: `technical_specifications.llm_provider`).

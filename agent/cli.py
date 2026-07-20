@@ -138,8 +138,6 @@ def run_chat(args: argparse.Namespace) -> int:
         state = app.invoke(state)
 
         print(state["messages"][-1].content)
-        if state.get("guardrail_flags"):
-            print(f"[guardrail: {len(state['guardrail_flags'])} flag(s) raised this session]")
 
 
 def main(argv: list[str] | None = None) -> int:

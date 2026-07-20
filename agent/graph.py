@@ -30,10 +30,15 @@ evaluator entirely. This preserves the original "skip everything
 downstream of fetch on error" guarantee while keeping the fan-out
 itself simple and unconditional.
 
-The chat graph (agent.graph.build_chat_graph, SCRUM-174) is defined
-further down this file - it is a completely separate graph, with its
-own state (ChatState) and no shared nodes with the report graph above.
-It only runs in `chat` mode.
+The chat graph (agent.graph.build_chat_graph) is defined further down
+this file - it is a completely separate graph, with its own state
+(ChatState) and no shared nodes with the report graph above. It only
+runs in `chat` mode. Every turn first fans out from START to two
+independent LLM-based guardrails (topic_guardrail, security_guardrail)
+that run concurrently and join at guardrail_gate before agent_node is
+ever allowed to run - the same fan-out/join mechanism as fetch's
+classify/stats/errors above, just gating entry to the ReAct loop
+instead of feeding a report.
 
 Dependency injection for testability
 -------------------------------------
@@ -42,9 +47,10 @@ build_graph() takes `fetch_fn`/`count_fn`/`stats_fn`/`errors_fn`/
 implementations). Tests pass in fakes, so the whole graph - including
 the conditional routing and the analyze/evaluate retry loop - can be
 exercised without ever touching a real MongoDB connection or a real
-LLM. build_chat_graph() takes an `llm` parameter for the same reason -
-a fake LLM lets tests exercise the ReAct loop without ever calling a
-real model.
+LLM. build_chat_graph() takes `llm`/`topic_guardrail_fn`/
+`security_guardrail_fn` parameters for the same reason - fakes let
+tests exercise the ReAct loop and the guardrail gate without ever
+calling a real model.
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ import operator
 from datetime import datetime
 from typing import Annotated, Any, Callable, Optional, TypedDict
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -66,7 +72,9 @@ from agent.nodes.evaluator import MAX_ANALYSIS_ATTEMPTS, evaluate_analysis
 from agent.nodes.fetch import fetch_tender_board_activity_logs
 from agent.nodes.guardrail import collect_and_screen_samples, screen_free_text
 from agent.nodes.report import format_error_report, format_report
+from agent.nodes.security_guardrail import classify_security_risk
 from agent.nodes.stats import compute_latency_stats, find_duplicate_tenders
+from agent.nodes.topic_guardrail import classify_topic
 from agent.tools import SIDE_EFFECT_TOOLS, TOOLS
 
 
@@ -311,28 +319,60 @@ class ChatState(TypedDict):
     tool call that triggers a flag adds to it, never replaces it) via
     the operator.add reducer - so a chat session's flags aren't lost
     turn to turn.
+
+    `topic_allowed`/`security_allowed` are plain (overwritten-each-turn)
+    booleans, one per input guardrail, mirroring ReportState's
+    `analysis_ok` above - each guardrail node writes only its own key so
+    the two can run concurrently with no write conflict (see
+    build_chat_graph's fan-out below), and route_after_guardrail_gate
+    reads both to decide whether the turn may reach agent_node.
     """
 
     messages: Annotated[list, add_messages]
     guardrail_flags: Annotated[list[str], operator.add]
+    topic_allowed: bool
+    security_allowed: bool
+
+
+GuardrailFn = Callable[[str], dict[str, Any]]
 
 
 def _has_tool_calls(message: Any) -> bool:
     return bool(getattr(message, "tool_calls", None))
 
 
-def build_chat_graph(llm: Any = None, tools: Optional[list] = None):
+def build_chat_graph(
+    llm: Any = None,
+    tools: Optional[list] = None,
+    topic_guardrail_fn: GuardrailFn = classify_topic,
+    security_guardrail_fn: GuardrailFn = classify_security_risk,
+):
     """
     Construct and compile the interactive chat graph:
 
-        START -> agent -> (tool_calls?) -> hitl/tool -> agent -> ... -> END
-                        \\_____________(no tool_calls)____________/
+        START -+-> topic_guardrail    -+
+               +-> security_guardrail -+-> guardrail_gate -> (allowed?) -> agent -> (tool_calls?) -> hitl/tool -> agent -> ... -> END
+                                                            \\_(blocked)_> reject -> END          \\_____________(no tool_calls)____________/
 
-    Classic ReAct loop: agent_node decides whether to call a tool or
-    give a final answer; tool_node runs read-only tools immediately;
-    hitl_node is scaffolding for a future write-tool (SIDE_EFFECT_TOOLS
-    is empty today, so hitl_node is reachable but never actually pauses
-    anything - see its docstring).
+    topic_guardrail and security_guardrail run concurrently (two plain,
+    unconditional edges off START - the same fan-out mechanism used for
+    fetch -> classify/stats/errors in the report graph above) and each
+    independently classifies the user's newest message before agent_node
+    ever runs: topic_guardrail rejects off-topic messages unrelated to
+    tenders, security_guardrail rejects prompt-injection attempts or
+    suspicious/dangerous database-extraction requests. guardrail_gate is
+    a pure join/no-op (like aggregate_node above) that exists only to
+    wait for both branches; route_after_guardrail_gate then requires
+    BOTH to have allowed the turn before it reaches agent_node - either
+    one blocking routes to reject_node instead, which appends a canned
+    refusal AIMessage and ends the turn without ever invoking the LLM
+    tool-calling loop.
+
+    Classic ReAct loop after the gate: agent_node decides whether to
+    call a tool or give a final answer; tool_node runs read-only tools
+    immediately; hitl_node is scaffolding for a future write-tool
+    (SIDE_EFFECT_TOOLS is empty today, so hitl_node is reachable but
+    never actually pauses anything - see its docstring).
 
     `llm` is injectable for tests: pass a fake object exposing
     `.invoke(messages) -> AIMessage` (already "bound" to whatever
@@ -344,6 +384,10 @@ def build_chat_graph(llm: Any = None, tools: Optional[list] = None):
     (agent.tools.TOOLS) - tests pass a couple of trivial fake tools
     instead, so exercising the loop never touches real MongoDB, on top
     of never calling a real model.
+
+    `topic_guardrail_fn`/`security_guardrail_fn` are injectable the same
+    way: pass a fake `lambda text: {"allowed": ..., "reason": ...}` to
+    exercise the gate (or bypass it) without ever calling a real model.
     """
     resolved_tools = tools if tools is not None else TOOLS
     llm_with_tools = llm if llm is not None else get_chat_openai().bind_tools(resolved_tools)
@@ -428,12 +472,82 @@ def build_chat_graph(llm: Any = None, tools: Optional[list] = None):
             return "hitl"
         return "tool"
 
+    def _latest_user_text(state: ChatState) -> str:
+        content = state["messages"][-1].content
+        return content if isinstance(content, str) else str(content)
+
+    def topic_guardrail_node(state: ChatState) -> dict[str, Any]:
+        """
+        Runs in parallel with security_guardrail_node; classifies only
+        the just-appended user turn (state["messages"][-1]) - this node
+        has a single incoming edge from START, so it always sees the
+        turn fresh, before agent_node or anything else has run.
+        """
+        result = topic_guardrail_fn(_latest_user_text(state))
+        update: dict[str, Any] = {"topic_allowed": bool(result.get("allowed"))}
+        if not result.get("allowed"):
+            update["guardrail_flags"] = [f"topic_guardrail_reject:{result.get('reason', '')}"]
+        return update
+
+    def security_guardrail_node(state: ChatState) -> dict[str, Any]:
+        """Runs in parallel with topic_guardrail_node; see its docstring."""
+        result = security_guardrail_fn(_latest_user_text(state))
+        update: dict[str, Any] = {"security_allowed": bool(result.get("allowed"))}
+        if not result.get("allowed"):
+            update["guardrail_flags"] = [f"security_guardrail_reject:{result.get('reason', '')}"]
+        return update
+
+    def guardrail_gate_node(state: ChatState) -> dict[str, Any]:
+        """
+        The join point after the topic/security guardrail fan-out -
+        exactly like aggregate_node above, a no-op that exists purely as
+        a synchronization point: LangGraph won't run this node until
+        both parallel guardrail branches have written their own,
+        distinct ChatState keys (topic_allowed / security_allowed).
+        """
+        return {}
+
+    def reject_node(state: ChatState) -> dict[str, Any]:
+        """
+        Reached only when guardrail_gate blocked the turn. Appends a
+        canned refusal AIMessage - run_chat (agent/cli.py) always prints
+        state["messages"][-1].content, so a blocked turn still needs a
+        real AI-authored message here, not silence.
+        """
+        if not state.get("topic_allowed", True):
+            refusal = "אני יכולה לעזור רק בשאלות על פעילות לוח המכרזים - הבקשה הזו לא נראית קשורה, אז אני לא יכולה לטפל בה."
+        else:
+            refusal = "הבקשה הזו סומנה ע\"י בדיקת אבטחה ולא ניתן לעבד אותה."
+        return {"messages": [AIMessage(content=refusal)]}
+
+    def route_after_guardrail_gate(state: ChatState) -> str:
+        if state.get("topic_allowed", True) and state.get("security_allowed", True):
+            return "agent"
+        return "reject"
+
     builder = StateGraph(ChatState)
+    builder.add_node("topic_guardrail", topic_guardrail_node)
+    builder.add_node("security_guardrail", security_guardrail_node)
+    builder.add_node("guardrail_gate", guardrail_gate_node)
+    builder.add_node("reject", reject_node)
     builder.add_node("agent", agent_node)
     builder.add_node("hitl", hitl_node)
     builder.add_node("tool", tool_node)
 
-    builder.add_edge(START, "agent")
+    # START fans out to both guardrails via two plain, unconditional
+    # edges - the same mechanism (see fetch -> classify/stats/errors
+    # above) that makes LangGraph schedule and run them concurrently.
+    builder.add_edge(START, "topic_guardrail")
+    builder.add_edge(START, "security_guardrail")
+    builder.add_edge("topic_guardrail", "guardrail_gate")
+    builder.add_edge("security_guardrail", "guardrail_gate")
+    builder.add_conditional_edges(
+        "guardrail_gate",
+        route_after_guardrail_gate,
+        {"agent": "agent", "reject": "reject"},
+    )
+    builder.add_edge("reject", END)
+
     builder.add_conditional_edges(
         "agent",
         route_after_agent,
